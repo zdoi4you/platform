@@ -7,7 +7,7 @@ const SCHEMA = {
   log: ['Дневник', { at: 'Време', actor: 'Потребител', action: 'Действие', ref: 'Обект', details: 'Подробности' }],
 
   profile: ['Профил', { key: 'Ключ', value: 'Стойност' }],
-  users: ['Потребители', { username: 'Потребител', name: 'Име', position: 'Длъжност', email: 'Имейл', phone: 'Телефон', role: 'Роля', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден', createdBy: 'Създал' }],
+  users: ['Потребители', { username: 'Потребител', name: 'Име', position: 'Длъжност', email: 'Имейл', phone: 'Телефон', role: 'Роля', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден', createdBy: 'Създал', mustChange: 'Да смени паролата' }],
   cases: ['Преписки', {
     regNo: 'Рег. №', createdAt: 'Въведена', createdBy: 'Въвел', kind: 'Вид заявление', regDate: 'Дата на регистриране', channel: 'Начин на подаване',
     applicantType: 'Вид заявител', applicantName: 'Заявител', applicantSeat: 'Седалище', applicantAddress: 'Адрес за кореспонденция', applicantEmail: 'Имейл', applicantPhone: 'Телефон',

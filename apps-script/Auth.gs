@@ -101,9 +101,10 @@ function login_(d) {
   patch_(acc.ss, acc.key, u._row, { lastLogin: at });
   audit_(acc.ss, username, 'Вход', '', '');
   const token = randomToken_(), exp = Date.now() + CFG.SESSION_MIN * 6e4;
-  saveSession_(token, { no: no, u: username, exp: exp });
+  const mc = u.mustChange === 'Да';
+  saveSession_(token, { no: no, u: username, exp: exp, mc: mc });
   const role = acc.org ? u.role : ROLE_OP;
-  return { token: token, session: exp, me: meInfo_(no, acc.org, u, role) };
+  return { token: token, session: exp, me: Object.assign(meInfo_(no, acc.org, u, role), { mustChange: mc }) };
 }
 
 function meInfo_(no, org, u, role) {
@@ -180,7 +181,9 @@ function changePassword_(d, ctx) {
   const ss = ctx.ss(), u = read_(ss, ctx.table).find(x => x.username === ctx.username);
   if (!u || !u.salt || !sameText_(serverHash_(cur, u.salt), u.hash)) fail_('password', 'Текущата парола е грешна.');
   const salt = randomToken_().slice(0, 32);
-  patch_(ss, ctx.table, u._row, { salt: salt, hash: serverHash_(next, salt) });
+  if (next === cur) fail_('password', 'Новата парола трябва да е различна от текущата.');
+  patch_(ss, ctx.table, u._row, { salt: salt, hash: serverHash_(next, salt), mustChange: '' });
+  if (ctx.session.mc) { ctx.session.mc = false; saveSession_(ctx.token, ctx.session); }
   audit_(ss, ctx.username, 'Смяна на парола', '', '');
   return {};
 }
@@ -199,7 +202,7 @@ function activate_(d) {
   }
   t.clear();
   const salt = randomToken_().slice(0, 32);
-  patch_(acc.ss, acc.key, u._row, { salt: salt, hash: serverHash_(preHash, salt), inviteHash: '', inviteExp: '' });
+  patch_(acc.ss, acc.key, u._row, { salt: salt, hash: serverHash_(preHash, salt), inviteHash: '', inviteExp: '', mustChange: '' });
   audit_(acc.ss, username, 'Зададена парола чрез покана', '', '');
   return { no: no, username: username };
 }

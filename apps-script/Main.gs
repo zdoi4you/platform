@@ -59,7 +59,11 @@ function actions_() {
     'op.decide': { auth: 'op', write: true, fn: opDecide_ },
     'op.orgs': { auth: 'op', fn: opOrgs_ },
     'op.status': { auth: 'op', write: true, fn: opStatus_ },
-    'op.inviteAdmin': { auth: 'op', write: true, fn: opInviteAdmin_ },
+    'op.org.get': { auth: 'op', fn: opOrgGet_ },
+    'op.org.create': { auth: 'op', write: true, fn: opOrgCreate_ },
+    'op.org.save': { auth: 'op', write: true, fn: opOrgSave_ },
+    'op.user.save': { auth: 'op', write: true, fn: opUserSave_ },
+    'op.user.password': { auth: 'op', write: true, fn: opUserPassword_ },
     'op.log': { auth: 'op', fn: opLog_ }
   };
 }
@@ -92,6 +96,8 @@ function dispatch_(req) {
     const a = all[name];
     const data = req.data && typeof req.data === 'object' ? req.data : {};
     const ctx = a.auth === 'public' ? null : auth_(req.token, a.auth);
+    // парола, генерирана от оператор, се сменя преди всичко останало
+    if (ctx && ctx.session.mc && ['password', 'logout', 'extend'].indexOf(name) < 0) fail_('mustchange', 'Сменете паролата, за да продължите.');
     const run = () => a.fn(data, ctx);
     return Object.assign({ ok: true, now: Date.now() }, a.write ? locked_(run) : run());
   } catch (err) {

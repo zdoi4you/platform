@@ -164,6 +164,37 @@ function newOrgNumber() {
   });
   return base + String((10 - sum % 10) % 10);
 }
+/* нов номер за заявка или добавяне; при зает номер се опитва с друг */
+async function withNewNumber(username, password, send) {
+  for (let i = 0; ; i++) {
+    const no = newOrgNumber();
+    try {
+      return { no, res: await send(no, await preHash(no, username, password)) };
+    } catch (e) {
+      if (e.code !== 'retry' || i >= 4) throw e;
+    }
+  }
+}
+/* парола от 16 знака, без трудни за различаване символи; генерира се в браузъра на оператора */
+function generatePassword() {
+  const abc = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  for (;;) {
+    const bytes = crypto.getRandomValues(new Uint8Array(64));
+    const p = [...bytes].filter(b => b < 220).slice(0, 16).map(b => abc[b % abc.length]).join('');
+    if (p.length === 16 && /\d/.test(p) && /[a-zA-Z]/.test(p)) return p;
+  }
+}
+function credentialsDialog(no, username, password, done) {
+  const text = `Номер на организацията: ${no}\nПотребител: ${username}\nПарола: ${password}`;
+  const dlg = h('dialog', null, h('h2', null, 'Данни за вход'),
+    h('p', { class: 'warnbox' }, 'Показват се само сега. Предайте ги лично, не по имейл. При първия вход потребителят ще трябва да смени паролата.'), h('br'),
+    h('dl', { class: 'kv' }, h('dt', null, 'Номер на организацията'), h('dd', { class: 'mono', id: 'cred-no' }, no), h('dt', null, 'Потребител'), h('dd', { class: 'mono', id: 'cred-user' }, username), h('dt', null, 'Парола'), h('dd', { class: 'mono', id: 'cred-password' }, password)),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn', onclick: async () => { try { await navigator.clipboard.writeText(text); toast('Данните са копирани.'); } catch (e) { toast('Препишете данните ръчно.'); } } }, 'Копирай'),
+      h('button', { class: 'btn primary', onclick: () => dlg.close() }, 'Затвори')));
+  dlg.addEventListener('close', () => { dlg.remove(); if (done) done(); });
+  document.body.append(dlg); dlg.showModal();
+}
 function checkPassword(p, again) {
   if (p.length < 12) throw new Error('Паролата трябва да е поне 12 знака.');
   if (!/\p{L}/u.test(p) || !/\d/.test(p)) throw new Error('Паролата трябва да съдържа букви и цифри.');
@@ -271,7 +302,7 @@ function markTab() {
   const cur = location.hash || '#/';
   document.querySelectorAll('nav.tabs a').forEach(a => {
     const href = a.getAttribute('href');
-    const on = href === '#/' ? cur === '#/' : cur === href || cur.startsWith(href + '/') || (href === '#/cases' && (cur.startsWith('#/case/') || cur === '#/new'));
+    const on = href === '#/' ? cur === '#/' : cur === href || cur.startsWith(href + '/') || (href === '#/cases' && (cur.startsWith('#/case/') || cur === '#/new')) || (href === '#/op/orgs' && (cur.startsWith('#/op/org/') || cur === '#/op/new'));
     a.classList.toggle('on', on);
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
@@ -297,7 +328,7 @@ function viewLogin(prefill) {
     const r = await api('login', { no: num, username: user, hash: await preHash(num, user, d.password) });
     session = { token: r.token, me: r.me, exp: r.session };
     saveSession();
-    location.hash = r.me.operator ? '#/op/apps' : '#/';
+    location.hash = r.me.mustChange ? '#/me' : r.me.operator ? '#/op/apps' : '#/';
     route();
   });
   gate([
@@ -313,7 +344,7 @@ function viewForgot() {
     h('h1', null, 'Забравена парола'),
     h('p', null, 'От съображения за сигурност данни за вход не се изпращат по имейл.'), h('br'),
     h('p', { class: 'muted' }, 'Служител: обърнете се към администратора на организацията. Той ще създаде еднократна връзка за нова парола и ще ви я предаде лично.'), h('br'),
-    h('p', { class: 'muted' }, 'Администратор: обърнете се към друг администратор на организацията или към екипа на ЗДОИ4You. Същото важи, ако сте загубили номера на организацията.'),
+    h('p', { class: 'muted' }, 'Администратор: обърнете се към друг администратор на организацията или към екипа на ЗДОИ4You, който може да генерира нова парола. Същото важи, ако сте загубили номера на организацията.'),
     h('div', { class: 'gate-links' }, h('a', { href: '#/login' }, 'Към входа'))
   ]);
 }
@@ -352,15 +383,7 @@ function viewApply() {
     const { password, again, ...data } = d;
     data.declare = d.declare === 'on';
     const username = String(d.adminUsername).trim().toLowerCase();
-    let r, no;
-    for (let i = 0; i < 5 && !r; i++) {
-      no = newOrgNumber();
-      try {
-        r = await api('public.apply', Object.assign({}, data, { no, hash: await preHash(no, username, password) }));
-      } catch (e) {
-        if (e.code !== 'retry' || i === 4) throw e;
-      }
-    }
+    const { no, res: r } = await withNewNumber(username, password, (num, hash) => api('public.apply', Object.assign({}, data, { no: num, hash })));
     gate([
       h('h1', null, 'Заявката е подадена'),
       h('p', { class: 'muted' }, `Номер на заявката: ${r.id}`), h('br'),
@@ -674,30 +697,31 @@ function showLink(res, name) {
   document.body.append(dlg); dlg.showModal();
 }
 
+function userDialog(u, save, done) {
+  const isNew = !u;
+  const form = h('form', null, h('h2', null, isNew ? 'Нов потребител' : `Потребител ${u.username}`), h('div', { class: 'form-grid' },
+    fieldEl({ k: 'username', label: 'Потребителско име', req: true, readonly: !isNew, pattern: '[a-z0-9._\\-]{3,40}', hint: 'Малки латински букви, цифри и . _ -' }, u && u.username),
+    fieldEl({ k: 'name', label: 'Имена', req: true }, u && u.name),
+    fieldEl({ k: 'position', label: 'Длъжност', req: true }, u && u.position),
+    fieldEl({ k: 'email', label: 'Служебен имейл', type: 'email', req: true }, u && u.email),
+    fieldEl({ k: 'phone', label: 'Телефон', type: 'tel' }, u && u.phone),
+    fieldEl({ k: 'role', label: 'Роля', type: 'select', options: ['Служител', 'Администратор'], req: true }, u ? u.role : 'Служител'),
+    isNew ? null : fieldEl({ k: 'active', label: 'Активен', type: 'select', options: ['Да', 'Не'], req: true }, u.active)),
+  h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Отказ'), h('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Създай потребител' : 'Запази')));
+  const dlg = h('dialog', null, form);
+  dlg.addEventListener('close', () => dlg.remove());
+  submitter(form, async d => {
+    const r = await save(Object.assign(d, { isNew, active: isNew ? true : d.active === 'Да' }));
+    dlg.close();
+    if (r.created) showLink(r, d.name); else toast('Записано.');
+    done();
+  });
+  document.body.append(dlg); dlg.showModal();
+}
+
 async function viewUsers() {
   const { users } = await api('users.list');
-  const edit = u => {
-    const isNew = !u;
-    const form = h('form', null, h('h2', null, isNew ? 'Нов потребител' : `Потребител ${u.username}`), h('div', { class: 'form-grid' },
-      fieldEl({ k: 'username', label: 'Потребителско име', req: true, readonly: !isNew, pattern: '[a-z0-9._\\-]{3,40}', hint: 'Малки латински букви, цифри и . _ -' }, u && u.username),
-      fieldEl({ k: 'name', label: 'Имена', req: true }, u && u.name),
-      fieldEl({ k: 'position', label: 'Длъжност', req: true }, u && u.position),
-      fieldEl({ k: 'email', label: 'Служебен имейл', type: 'email', req: true }, u && u.email),
-      fieldEl({ k: 'phone', label: 'Телефон', type: 'tel' }, u && u.phone),
-      fieldEl({ k: 'role', label: 'Роля', type: 'select', options: ['Служител', 'Администратор'], req: true }, u ? u.role : 'Служител'),
-      isNew ? null : fieldEl({ k: 'active', label: 'Активен', type: 'select', options: ['Да', 'Не'], req: true }, u.active)),
-    h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Отказ'), h('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Създай потребител' : 'Запази')));
-    const dlg = h('dialog', null, form);
-    dlg.addEventListener('close', () => dlg.remove());
-    submitter(form, async d => {
-      const r = await api('users.save', Object.assign(d, { isNew, active: isNew ? true : d.active === 'Да' }));
-      dlg.close();
-      Store.boot = null;
-      if (r.created) showLink(r, d.name); else toast('Записано.');
-      viewUsers().catch(showError);
-    });
-    document.body.append(dlg); dlg.showModal();
-  };
+  const edit = u => userDialog(u, d => api('users.save', d), () => { Store.boot = null; viewUsers().catch(showError); });
   setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Потребители'), h('p', { class: 'muted small' }, 'Всеки потребител получава от вас лично еднократна връзка и сам задава паролата си. Данни за вход не се изпращат по имейл.')), h('button', { class: 'btn primary', onclick: () => edit(null) }, '+ Нов потребител')),
     h('div', { class: 'card table-wrap' }, h('table', null,
       h('thead', null, h('tr', null, ['Потребител', 'Имена', 'Длъжност', 'Имейл', 'Роля', 'Състояние', 'Последен вход', ''].map(t => h('th', null, t)))),
@@ -730,8 +754,10 @@ function viewMe() {
     await api('password', { current: await preHash(me.no, me.username, d.current), next: await preHash(me.no, me.username, d.next) });
     form.reset();
     toast('Паролата е сменена.');
+    if (me.mustChange) { me.mustChange = false; saveSession(); location.hash = '#/'; }
   });
   setView(h('div', { class: 'head' }, h('h1', null, 'Моят профил')),
+    me.mustChange ? [h('p', { class: 'warnbox' }, 'Паролата ви е генерирана от оператор. Сменете я, за да продължите.'), h('br')] : null,
     h('div', { class: 'split' }, form, h('div', { class: 'card' }, h('dl', { class: 'kv' },
       h('dt', null, 'Име'), h('dd', null, me.name), h('dt', null, 'Потребител'), h('dd', { class: 'mono' }, me.username),
       h('dt', null, 'Роля'), h('dd', null, me.role), h('dt', null, 'Организация'), h('dd', null, me.org), h('dt', null, 'Номер'), h('dd', { class: 'mono' }, me.no)))));
@@ -771,18 +797,66 @@ function rejectDialog(a) {
 }
 async function viewOpOrgs() {
   const { orgs } = await api('op.orgs');
-  setView(h('div', { class: 'head' }, h('h1', null, 'Организации')), h('div', { class: 'card table-wrap' }, orgs.length ? h('table', null,
+  setView(h('div', { class: 'head' }, h('h1', null, 'Организации'), h('a', { class: 'btn primary', href: '#/op/new' }, '+ Добави организация')), h('div', { class: 'card table-wrap' }, orgs.length ? h('table', null,
     h('thead', null, h('tr', null, ['Номер', 'Наименование', 'ЕИК/БУЛСТАТ', 'Вид', 'Статус', 'Одобрена', ''].map(t => h('th', null, t)))),
     h('tbody', null, orgs.map(o => {
       const next = o.status === 'Активна' ? 'Спряна' : 'Активна';
       const toggle = h('button', { class: 'btn sm' + (next === 'Спряна' ? ' danger' : '') }, next === 'Спряна' ? 'Спри достъпа' : 'Активирай');
       toggle.addEventListener('click', () => withBusy(toggle, async () => { await api('op.status', { no: o.no, status: next }); viewOpOrgs().catch(showError); }));
-      const inv = h('button', { class: 'btn sm' }, 'Нова парола за администратора');
-      inv.addEventListener('click', () => withBusy(inv, async () => { const r = await api('op.inviteAdmin', { no: o.no }); showLink(r, r.name); }));
+      const inv = h('a', { class: 'btn sm', href: '#/op/org/' + o.no }, 'Данни и пароли');
       return h('tr', null, h('td', { class: 'mono' }, o.no), h('td', null, o.name), h('td', { class: 'mono' }, o.eik), h('td', null, o.type),
         h('td', null, h('span', { class: 'pill ' + (o.status === 'Активна' ? 'ok' : 'bad') }, o.status)), h('td', { class: 'mono small' }, fmtTime(o.approvedAt)),
         h('td', null, h('div', { class: 'actions' }, toggle, inv)));
     }))) : h('p', { class: 'muted' }, 'Още няма одобрени организации.')));
+}
+
+function viewOpNew() {
+  const adminFields = ADMIN_SECTION[1].filter(f => f.k !== 'password' && f.k !== 'again');
+  const form = h('form', { class: 'card' },
+    ORG_SECTIONS.map(([title, fields]) => h('fieldset', null, h('legend', null, title), h('div', { class: 'form-grid' }, fields.map(f => fieldEl(f))))),
+    h('fieldset', null, h('legend', null, ADMIN_SECTION[0]), h('div', { class: 'form-grid' }, adminFields.map(f => fieldEl(f)))),
+    h('p', { class: 'note' }, 'Организацията се създава веднага, без одобрение, в собствена Google таблица. Паролата на администратора се генерира и се показва само веднъж.'), h('br'),
+    h('button', { class: 'btn primary', type: 'submit' }, 'Създай организация и генерирай парола'));
+  form.querySelector('[name=type]').addEventListener('change', e => {
+    form.querySelector('[name=basis]').value = BASIS_BY_TYPE[e.target.value] || 'чл. 3, ал. 1';
+  });
+  submitter(form, async d => {
+    const username = String(d.adminUsername).trim().toLowerCase(), password = generatePassword();
+    const { no } = await withNewNumber(username, password, (num, hash) => api('op.org.create', Object.assign({}, d, { no: num, hash })));
+    credentialsDialog(no, username, password, () => { location.hash = '#/op/org/' + no; });
+  });
+  setView(h('div', { class: 'head' }, h('div', null, h('p', { class: 'small' }, h('a', { href: '#/op/orgs' }, '← Всички организации')), h('h1', null, 'Нова организация'))), form);
+}
+
+async function viewOpOrg(no) {
+  const r = await api('op.org.get', { no });
+  const form = h('form', { class: 'card' },
+    ORG_SECTIONS.map(([title, fields]) => h('fieldset', null, h('legend', null, title), h('div', { class: 'form-grid' }, fields.map(f => fieldEl(f, r.profile[f.k]))))),
+    h('button', { class: 'btn primary', type: 'submit' }, 'Запази данните'));
+  submitter(form, async d => {
+    await api('op.org.save', Object.assign(d, { no }));
+    toast('Данните са записани.');
+    viewOpOrg(no).catch(showError);
+  });
+  const reload = () => viewOpOrg(no).catch(showError);
+  const users = h('div', { class: 'card table-wrap' },
+    h('div', { class: 'head' }, h('h2', null, 'Потребители'), h('button', { class: 'btn sm', onclick: () => userDialog(null, d => api('op.user.save', Object.assign(d, { no })), reload) }, '+ Нов потребител')),
+    h('table', null,
+      h('thead', null, h('tr', null, ['Потребител', 'Имена', 'Роля', 'Състояние', 'Последен вход', ''].map(t => h('th', null, t)))),
+      h('tbody', null, r.users.map(u => {
+        const gen = h('button', { class: 'btn sm' }, 'Генерирай парола');
+        gen.addEventListener('click', () => withBusy(gen, async () => {
+          const password = generatePassword();
+          await api('op.user.password', { no, username: u.username, hash: await preHash(no, u.username, password) });
+          credentialsDialog(no, u.username, password, reload);
+        }));
+        return h('tr', null, h('td', { class: 'mono' }, u.username), h('td', null, u.name), h('td', null, u.role),
+          h('td', null, u.active !== 'Да' ? h('span', { class: 'pill bad' }, 'Спрян') : u.mustChange === 'Да' ? h('span', { class: 'pill warn' }, 'Да смени паролата') : u.pending ? h('span', { class: 'pill warn' }, 'Чака парола') : h('span', { class: 'pill ok' }, 'Активен')),
+          h('td', { class: 'mono small' }, fmtTime(u.lastLogin)),
+          h('td', { class: 'right' }, h('div', { class: 'actions' }, h('button', { class: 'btn sm', onclick: () => userDialog(u, d => api('op.user.save', Object.assign(d, { no })), reload) }, 'Промени'), gen)));
+      }))));
+  setView(h('div', { class: 'head' }, h('div', null, h('p', { class: 'small' }, h('a', { href: '#/op/orgs' }, '← Всички организации')), h('h1', null, r.profile.name), h('p', { class: 'muted small' }, 'Номер на организацията: ', h('b', { class: 'mono' }, no))), h('span', { class: 'pill ' + (r.status === 'Активна' ? 'ok' : 'bad') }, r.status)),
+    h('div', { class: 'stack' }, users, form));
 }
 
 /* ---------- маршрути ---------- */
@@ -802,6 +876,7 @@ async function route() {
     if (page !== 'login') history.replaceState(null, '', '#/login');
     return viewLogin();
   }
+  if (session.me.mustChange && page !== 'me') { location.hash = '#/me'; return; }
   if (page === 'login') { location.hash = session.me.operator ? '#/op/apps' : '#/'; return; }
   if (!document.getElementById('view')) shell();
   markTab();
@@ -810,6 +885,8 @@ async function route() {
     if (session.me.operator) {
       if (page === 'me') return viewMe();
       if (parts[1] === 'orgs') return await viewOpOrgs();
+      if (parts[1] === 'org') return await viewOpOrg(parts[2]);
+      if (parts[1] === 'new') return viewOpNew();
       if (parts[1] === 'log') return setView(logView((await api('op.log')).log));
       if (parts[0] === 'op' && parts[1] === 'apps') return await viewOpApps();
       location.hash = '#/op/apps';

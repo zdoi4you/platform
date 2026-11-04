@@ -79,7 +79,8 @@ test('organizations never receive access data by email', () => {
   const { g, op, a } = setupTwo();
   const b = addStaff(g, a.token);
   g.call('users.invite', { username: 'emp1' }, a.token);
-  g.call('op.inviteAdmin', { no: a.no }, op);
+  g.call('op.user.password', { no: a.no, username: a.username, hash: HASH('g') }, op);
+  g.call('op.org.create', Object.assign(orgData({ eik: '831902088', name: 'От оператор', adminUsername: 'opadmin' }), { no: newNo(g), hash: HASH('g') }), op);
   const rejected = apply(g, { eik: '121758615', name: 'Трета' });
   g.call('op.decide', { id: rejected.id, approve: false, reason: 'x' }, op);
   const orgMails = g.mails.filter(m => m.to !== 'owner@example.org');
@@ -88,7 +89,7 @@ test('organizations never receive access data by email', () => {
     const text = m.subject + ' ' + m.body;
     assert.ok(!/activate/.test(text), 'без връзка: ' + text);
     assert.ok(!text.includes(a.no), 'без номер на организация: ' + text);
-    assert.ok(!text.includes(a.username) && !text.includes(b[3]), 'без потребител: ' + text);
+    assert.ok(!text.includes(a.username) && !text.includes('opadmin') && !text.includes(b[3]), 'без потребител: ' + text);
     assert.ok(!/парола:/i.test(text), text);
   });
   assert.equal(g.call('forgot', { no: a.no, username: a.username }).error, 'action');
@@ -361,10 +362,78 @@ test('a forgotten password is reset with a one-time link from an administrator o
   assert.equal(g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).ok, true, 'old password works until reset');
   assert.equal(g.call('activate', { no: staffLink[1], username: staffLink[2], token: staffLink[3], hash: HASH('n') }).ok, true);
   assert.equal(g.call('login', { no: a.no, username: 'emp1', hash: HASH('n') }).ok, true);
-  const adminLink = parts(g.call('op.inviteAdmin', { no: a.no }, op).link);
-  assert.equal(adminLink[2], a.username);
+  const adminLink = parts(g.call('users.invite', { username: a.username }, a.token).link);
   assert.equal(g.call('activate', { no: adminLink[1], username: adminLink[2], token: adminLink[3], hash: HASH('m') }).ok, true);
   assert.equal(g.call('login', { no: a.no, username: a.username, hash: HASH('m') }).ok, true);
+  assert.equal(g.call('op.inviteAdmin', { no: a.no }, op).error, 'action');
+});
+
+test('operator adds an organization directly, in its own spreadsheet, with a forced password change', () => {
+  const g = load(), op = operator(g);
+  const no = newNo(g);
+  const data = orgData({ adminUsername: 'opadmin' });
+  assert.equal(g.call('op.org.create', Object.assign({}, data, { no, hash: '' }), op).error, 'value');
+  assert.equal(g.call('op.org.create', Object.assign({}, data, { eik: '123456789', no, hash: HASH('g') }), op).error, 'eik');
+  const r = g.call('op.org.create', Object.assign({}, data, { no, hash: HASH('g') }), op);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.no, no);
+  assert.ok([...g.books.values()].some(x => x.name.includes(no)), 'own spreadsheet');
+  assert.equal(g.call('op.org.create', Object.assign({}, data, { no: newNo(g), hash: HASH('g') }), op).error, 'duplicate');
+  assert.equal(g.call('public.apply', Object.assign(orgData(), { no: newNo(g), hash: HASH('g') })).error, 'duplicate');
+
+  const l = g.call('login', { no, username: 'opadmin', hash: HASH('g') });
+  assert.equal(l.me.mustChange, true);
+  for (const act of ['case.list', 'org.bootstrap', 'users.list']) assert.equal(g.call(act, {}, l.token).error, 'mustchange', act);
+  assert.equal(g.call('extend', {}, l.token).ok, true);
+  assert.equal(g.call('password', { current: HASH('g'), next: HASH('g') }, l.token).error, 'password', 'must really change');
+  assert.equal(g.call('password', { current: HASH('g'), next: HASH('n') }, l.token).ok, true);
+  assert.equal(g.call('case.list', {}, l.token).ok, true, 'free after the change');
+  const again = g.call('login', { no, username: 'opadmin', hash: HASH('n') });
+  assert.equal(again.me.mustChange, false);
+});
+
+test('operator generates a password; only its hash reaches the server and old password stops working', () => {
+  const { g, op, a } = setupTwo();
+  for (let i = 0; i < 5; i++) g.call('login', { no: a.no, username: a.username, hash: HASH('x') });
+  assert.equal(g.call('login', { no: a.no, username: a.username, hash: HASH('p') }).error, 'locked');
+  assert.equal(g.call('op.user.password', { no: a.no, username: 'nobody', hash: HASH('g') }, op).error, 'notfound');
+  assert.equal(g.call('op.user.password', { no: a.no, username: a.username, hash: HASH('g') }, op).ok, true);
+  assert.equal(g.call('login', { no: a.no, username: a.username, hash: HASH('p') }).error, 'login');
+  const l = g.call('login', { no: a.no, username: a.username, hash: HASH('g') });
+  assert.equal(l.me.mustChange, true, 'lockout cleared and change forced');
+  assert.equal(g.call('op.org.get', { no: a.no }, op).users[0].mustChange, 'Да');
+});
+
+test('operator edits organization data, including EIK, and it reaches the register', () => {
+  const { g, op, a, b } = setupTwo();
+  const got = g.call('op.org.get', { no: a.no }, op);
+  assert.ok(!/"(salt|hash|inviteHash|sheetId)"/.test(JSON.stringify(got)));
+  const next = Object.assign({}, got.profile, { no: a.no, name: 'Ново име', eik: '831902088' });
+  assert.equal(g.call('op.org.save', Object.assign({}, next, { address: '' }), op).error, 'required');
+  assert.equal(g.call('op.org.save', Object.assign({}, next, { eik: '121758615' }), op).error, 'duplicate');
+  assert.equal(g.call('op.org.save', next, op).ok, true);
+  const reg = g.call('op.orgs', {}, op).orgs.find(o => o.no === a.no);
+  assert.equal(reg.name, 'Ново име');
+  assert.equal(reg.eik, '831902088');
+  assert.equal(g.call('org.bootstrap', {}, a.token).profile.name, 'Ново име');
+  assert.equal(g.call('org.bootstrap', {}, b.token).profile.name, 'Агенция Б', 'other organization untouched');
+  assert.equal(g.call('op.org.get', { no: '99999999' }, op).error, 'notfound');
+});
+
+test('operator manages users of an organization; the last administrator stays protected', () => {
+  const { g, op, a } = setupTwo();
+  const r = g.call('op.user.save', { no: a.no, isNew: true, username: 'emp9', name: 'Служител', position: 'Експерт', email: 'e9@example.org', role: 'Служител' }, op);
+  assert.equal(r.created, true, JSON.stringify(r));
+  assert.ok(g.call('users.list', {}, a.token).users.some(u => u.username === 'emp9'));
+  assert.equal(g.call('op.user.save', { no: a.no, username: a.username, name: 'М', position: 'Ю', email: 'admin@example.org', role: 'Служител' }, op).error, 'lastadmin');
+});
+
+test('organizations cannot use the new operator actions', () => {
+  const { g, a, b } = setupTwo();
+  for (const act of ['op.org.get', 'op.org.create', 'op.org.save', 'op.user.save', 'op.user.password']) {
+    assert.equal(g.call(act, { no: b.no, username: b.username, hash: HASH('h') }, a.token).error, 'role', act);
+  }
+  assert.equal(g.call('login', { no: b.no, username: b.username, hash: HASH('p') }).ok, true, 'password of B untouched');
 });
 
 test('operator password can be reset only from the script editor', () => {

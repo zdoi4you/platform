@@ -38,6 +38,37 @@ function cleanAdmin_(d) {
   return a;
 }
 
+/* номерът се създава в браузъра, защото участва в изчисляването на хеша на паролата */
+function newNumber_(raw) {
+  const no = str_(raw, 8);
+  if (!NO_RE_.test(no) || no === CFG.OPERATOR_NO || no.charAt(0) === '0' || luhn_(no.slice(0, 7)) !== no.charAt(7)) fail_('value', 'Невалиден номер на организация.');
+  return no;
+}
+
+function newPreHash_(raw) {
+  const preHash = str_(raw, 64);
+  if (!PREHASH_RE_.test(preHash)) fail_('value', 'Задайте парола на администратора.');
+  return preHash;
+}
+
+const numberTaken_ = (m, no) => read_(m, 'orgs').some(x => x.no === no) || read_(m, 'apps').some(x => x.orgNo === no && x.status !== 'Отказана');
+
+/* отделна таблица за организацията и първият ѝ администратор */
+function createOrg_(m, data, no, salt, hash, actor, mustChange, ref) {
+  const book = SpreadsheetApp.create('ЗДОИ4You – ' + no + ' – ' + data.name);
+  const folderId = PropertiesService.getScriptProperties().getProperty('FOLDER_ID');
+  DriveApp.getFileById(book.getId()).moveTo(DriveApp.getFolderById(folderId));
+  ORG_TABLES.forEach(k => table_(book, k));
+  dropDefaultSheet_(book);
+  Object.keys(ORG_FIELDS).forEach(k => insert_(book, 'profile', { key: k, value: data[k] }));
+  insert_(book, 'users', {
+    username: data.adminUsername, name: data.adminName, position: data.adminPosition, email: data.adminEmail, phone: data.adminPhone,
+    role: ROLE_ADMIN, active: 'Да', salt: salt, hash: hash, createdAt: stamp_(), createdBy: actor, mustChange: mustChange ? 'Да' : ''
+  });
+  audit_(book, actor, 'Организацията е създадена', no, ref);
+  insert_(m, 'orgs', { no: no, name: data.name, eik: data.eik, type: data.type, status: 'Активна', sheetId: book.getId(), approvedAt: stamp_(), approvedBy: actor, adminUser: data.adminUsername });
+}
+
 /* ---------- публична заявка ---------- */
 
 function applyPublic_(d) {
@@ -47,15 +78,11 @@ function applyPublic_(d) {
   if (hour >= CFG.APPLY_PER_HOUR) fail_('busy', 'Твърде много заявки. Опитайте по-късно.');
   const org = cleanOrg_(d), admin = cleanAdmin_(d);
   if (d.declare !== true) fail_('required', 'Необходимо е да потвърдите декларацията за представителна власт.');
-  // номерът се създава в браузъра, защото участва в изчисляването на хеша на паролата
-  const no = str_(d.no, 8), preHash = str_(d.hash, 64);
-  if (!NO_RE_.test(no) || no === CFG.OPERATOR_NO || no.charAt(0) === '0' || luhn_(no.slice(0, 7)) !== no.charAt(7)) fail_('value', 'Невалиден номер на организация.');
-  if (!PREHASH_RE_.test(preHash)) fail_('value', 'Задайте парола на администратора.');
+  const no = newNumber_(d.no), preHash = newPreHash_(d.hash);
   const m = master_();
   if (read_(m, 'orgs').some(x => x.eik === org.eik && x.status !== 'Закрита')) fail_('duplicate', 'Организация с този ЕИК/БУЛСТАТ вече е регистрирана.');
   if (read_(m, 'apps').some(x => x.eik === org.eik && x.status === 'Чака одобрение')) fail_('duplicate', 'За този ЕИК/БУЛСТАТ вече има подадена заявка, която чака одобрение.');
-  const taken = read_(m, 'orgs').some(x => x.no === no) || read_(m, 'apps').some(x => x.orgNo === no && x.status !== 'Отказана');
-  if (taken) fail_('retry', 'Номерът е зает. Опитайте отново.');
+  if (numberTaken_(m, no)) fail_('retry', 'Номерът е зает. Опитайте отново.');
   cache.put('apply:h', String(hour + 1), 3600);
   const id = 'Р-' + todayIso_().slice(0, 4) + '-' + String(nextCounter_(m, 'apps')).padStart(4, '0');
   const salt = randomToken_().slice(0, 32);
@@ -115,20 +142,7 @@ function opDecide_(d, ctx) {
   const no = app.orgNo;
   if (orgs.some(x => x.no === no)) fail_('duplicate', 'Номерът на организацията вече се използва.');
 
-  // отделна таблица за организацията
-  const book = SpreadsheetApp.create('ЗДОИ4You – ' + no + ' – ' + data.name);
-  const folderId = PropertiesService.getScriptProperties().getProperty('FOLDER_ID');
-  DriveApp.getFileById(book.getId()).moveTo(DriveApp.getFolderById(folderId));
-  ORG_TABLES.forEach(k => table_(book, k));
-  dropDefaultSheet_(book);
-  Object.keys(ORG_FIELDS).forEach(k => insert_(book, 'profile', { key: k, value: data[k] }));
-  insert_(book, 'users', {
-    username: data.adminUsername, name: data.adminName, position: data.adminPosition, email: data.adminEmail, phone: data.adminPhone,
-    role: ROLE_ADMIN, active: 'Да', salt: app.salt, hash: app.hash, createdAt: stamp_(), createdBy: ctx.username
-  });
-  audit_(book, ctx.username, 'Организацията е одобрена', no, app.id);
-
-  insert_(m, 'orgs', { no: no, name: data.name, eik: data.eik, type: data.type, status: 'Активна', sheetId: book.getId(), approvedAt: stamp_(), approvedBy: ctx.username, adminUser: data.adminUsername });
+  createOrg_(m, data, no, app.salt, app.hash, ctx.username, false, app.id);
   // хешът вече е в таблицата на организацията и не остава в главната
   patch_(m, 'apps', app._row, { status: 'Одобрена', decidedBy: ctx.username, decidedAt: stamp_(), salt: '', hash: '' });
   audit_(m, ctx.username, 'Одобрена регистрация', app.id, no + ' ' + data.name);
@@ -150,17 +164,79 @@ function opStatus_(d, ctx) {
   return {};
 }
 
-function opInviteAdmin_(d, ctx) {
-  const no = str_(d.no, 8), org = read_(master_(), 'orgs').find(x => x.no === no);
+function regOrg_(raw) {
+  const no = str_(raw, 8), org = read_(master_(), 'orgs').find(x => x.no === no);
   if (!org) fail_('notfound', 'Организацията не е намерена.');
-  const book = orgSheet_(org), users = read_(book, 'users');
-  const u = users.find(x => x.username === org.adminUser && x.active === 'Да') || users.find(x => x.role === ROLE_ADMIN && x.active === 'Да');
-  if (!u) fail_('notfound', 'Няма активен администратор.');
-  const inv = newInvite_(CFG.INVITE_DAYS * 24);
-  patch_(book, 'users', u._row, { inviteHash: inv.hash, inviteExp: inv.exp });
-  audit_(book, ctx.username, 'Нова покана от оператор', u.username, '');
-  audit_(master_(), ctx.username, 'Нова връзка за администратор', no, u.username);
-  return { name: u.name, link: inviteLink_(no, u.username, inv.token) };
+  return org;
+}
+
+const opActor_ = ctx => 'оператор ' + ctx.username;
+
+function usersPublic_(ss) {
+  return publicRows_(read_(ss, 'users')).map(u => { const o = Object.assign({}, u); o.pending = !!u.inviteExp; delete o.inviteExp; return o; });
+}
+
+function opOrgGet_(d, ctx) {
+  const org = regOrg_(d.no), book = orgSheet_(org);
+  return { no: org.no, status: org.status, profile: profile_(book), users: usersPublic_(book) };
+}
+
+/* операторът добавя организация директно, без заявка */
+function opOrgCreate_(d, ctx) {
+  const org = cleanOrg_(d), admin = cleanAdmin_(d), no = newNumber_(d.no), preHash = newPreHash_(d.hash), m = master_();
+  if (read_(m, 'orgs').some(x => x.eik === org.eik && x.status !== 'Закрита')) fail_('duplicate', 'Организация с този ЕИК/БУЛСТАТ вече е регистрирана.');
+  if (read_(m, 'apps').some(x => x.eik === org.eik && x.status === 'Чака одобрение')) fail_('duplicate', 'За този ЕИК/БУЛСТАТ има подадена заявка, която чака одобрение. Решете я от „Заявки за регистрация“.');
+  if (numberTaken_(m, no)) fail_('retry', 'Номерът е зает. Опитайте отново.');
+  const salt = randomToken_().slice(0, 32);
+  createOrg_(m, Object.assign({}, org, admin), no, salt, serverHash_(preHash, salt), opActor_(ctx), true, 'добавена от оператор');
+  audit_(m, ctx.username, 'Добавена организация', no, org.name);
+  mail_(org.email, 'ЗДОИ4You Платформа – регистрирана организация',
+    '„' + org.name + '“ е регистрирана в платформата ' + CFG.APP_URL + ' от екипа на ЗДОИ4You. Данните за вход се предават лично.');
+  return { no: no };
+}
+
+function saveProfile_(book, cur, next, actor) {
+  const rows = read_(book, 'profile'), changed = [];
+  Object.keys(next).forEach(k => {
+    if (next[k] === cur[k]) return;
+    const r = rows.find(x => x.key === k);
+    if (r) patch_(book, 'profile', r._row, { value: next[k] }); else insert_(book, 'profile', { key: k, value: next[k] });
+    changed.push(k);
+  });
+  audit_(book, actor, 'Промяна на данните на организацията', '', changed.join(', '));
+  return changed;
+}
+
+/* операторът променя и ЕИК; регистърът се обновява заедно с профила */
+function opOrgSave_(d, ctx) {
+  const m = master_(), reg = regOrg_(d.no), next = cleanOrg_(d), book = orgSheet_(reg);
+  if (read_(m, 'orgs').some(x => x.no !== reg.no && x.eik === next.eik && x.status !== 'Закрита')) fail_('duplicate', 'Друга организация вече е с този ЕИК/БУЛСТАТ.');
+  const changed = saveProfile_(book, profile_(book), next, opActor_(ctx));
+  patch_(m, 'orgs', reg._row, { name: next.name, eik: next.eik, type: next.type });
+  dropOrgCache_(reg.no);
+  audit_(m, ctx.username, 'Променени данни на организация', reg.no, changed.join(', '));
+  return { profile: next };
+}
+
+function opUserSave_(d, ctx) {
+  const reg = regOrg_(d.no), book = orgSheet_(reg);
+  const r = usersSave_(d, { ss: () => book, no: reg.no, username: opActor_(ctx) });
+  audit_(master_(), ctx.username, r.created ? 'Нов потребител в организация' : 'Променен потребител в организация', reg.no, str_(d.username, 40));
+  return r;
+}
+
+/* паролата се генерира в браузъра на оператора; тук идва само нейният хеш */
+function opUserPassword_(d, ctx) {
+  const reg = regOrg_(d.no), book = orgSheet_(reg), preHash = newPreHash_(d.hash);
+  const username = str_(d.username, 40).toLowerCase();
+  const u = read_(book, 'users').find(x => x.username === username);
+  if (!u) fail_('notfound', 'Потребителят не е намерен.');
+  const salt = randomToken_().slice(0, 32);
+  patch_(book, 'users', u._row, { salt: salt, hash: serverHash_(preHash, salt), inviteHash: '', inviteExp: '', mustChange: 'Да' });
+  throttle_(reg.no + '|' + username).clear();
+  audit_(book, opActor_(ctx), 'Генерирана парола от оператор', username, '');
+  audit_(master_(), ctx.username, 'Генерирана парола', reg.no, username);
+  return {};
 }
 
 /* ---------- организация ---------- */
@@ -185,25 +261,17 @@ function orgSave_(d, ctx) {
   const ss = ctx.ss(), cur = profile_(ss), next = cleanOrg_(d);
   // ЕИК идентифицира организацията и не се променя от профила
   next.eik = cur.eik;
-  const rows = read_(ss, 'profile');
-  const changed = [];
-  Object.keys(next).forEach(k => {
-    if (next[k] === cur[k]) return;
-    const r = rows.find(x => x.key === k);
-    if (r) patch_(ss, 'profile', r._row, { value: next[k] }); else insert_(ss, 'profile', { key: k, value: next[k] });
-    changed.push(k);
-  });
-  if (next.name !== cur.name) {
+  saveProfile_(ss, cur, next, ctx.username);
+  if (next.name !== cur.name || next.type !== cur.type) {
     const m = master_(), reg = read_(m, 'orgs').find(x => x.no === ctx.no);
-    patch_(m, 'orgs', reg._row, { name: next.name });
+    patch_(m, 'orgs', reg._row, { name: next.name, type: next.type });
     dropOrgCache_(ctx.no);
   }
-  audit_(ss, ctx.username, 'Промяна на данните на организацията', '', changed.join(', '));
   return { profile: next };
 }
 
 function usersList_(d, ctx) {
-  return { users: publicRows_(read_(ctx.ss(), 'users')).map(u => { const o = Object.assign({}, u); o.pending = !!u.inviteExp; delete o.inviteExp; return o; }) };
+  return { users: usersPublic_(ctx.ss()) };
 }
 
 function usersSave_(d, ctx) {
