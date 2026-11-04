@@ -1,0 +1,159 @@
+/**
+ * ЗДОИ4You – Платформа за задължените лица (https://platform.zdoi4you.eu).
+ *
+ * Данни:
+ *   Главна таблица        – заявки за регистрация, регистър на организациите, оператори, дневник.
+ *   Таблица на организация – отделна Google таблица за всяка организация, създава се при одобрението:
+ *                            профил, потребители, преписки, събития, документи, чл. 15, дневник.
+ * Всяка сесия е обвързана с една организация. Идентификаторът на таблицата идва само от регистъра,
+ * никога от браузъра, затова заявка от една организация не може да отвори таблицата на друга.
+ *
+ * Настройка: изпълнете setup() веднъж от редактора. Вижте README.md.
+ */
+const CFG = {
+  APP_URL: 'https://platform.zdoi4you.eu/',
+  TZ: 'Europe/Sofia',
+  SESSION_MIN: 30,
+  INVITE_DAYS: 7,
+  RESET_HOURS: 2,
+  OPERATOR_NO: '00000000',
+  MAX_FAILS: 5,
+  FAIL_WINDOW_S: 900,
+  APPLY_PER_HOUR: 30
+};
+
+const ROLE_ADMIN = 'Администратор', ROLE_STAFF = 'Служител', ROLE_OP = 'Оператор';
+
+/* auth: public | user (всеки потребител на организация) | admin (администратор на организация) | op (оператор) | any */
+function actions_() {
+  return {
+    'public.apply': { auth: 'public', write: true, fn: applyPublic_ },
+    login: { auth: 'public', write: true, fn: login_ },
+    activate: { auth: 'public', write: true, fn: activate_ },
+    forgot: { auth: 'public', write: true, fn: forgot_ },
+
+    extend: { auth: 'any', fn: extend_ },
+    logout: { auth: 'any', fn: logout_ },
+    password: { auth: 'any', write: true, fn: changePassword_ },
+
+    'org.bootstrap': { auth: 'user', fn: orgBootstrap_ },
+    'org.save': { auth: 'admin', write: true, fn: orgSave_ },
+    'users.list': { auth: 'admin', fn: usersList_ },
+    'users.save': { auth: 'admin', write: true, fn: usersSave_ },
+    'users.invite': { auth: 'admin', write: true, fn: usersInvite_ },
+    'log.list': { auth: 'admin', fn: orgLog_ },
+
+    'case.list': { auth: 'user', fn: caseList_ },
+    'case.get': { auth: 'user', fn: caseGet_ },
+    'case.create': { auth: 'user', write: true, fn: caseCreate_ },
+    'case.update': { auth: 'user', write: true, fn: caseUpdate_ },
+    'case.comment': { auth: 'user', write: true, fn: caseComment_ },
+
+    'doc.create': { auth: 'user', write: true, fn: docCreate_ },
+    'doc.list': { auth: 'user', fn: docList_ },
+    'doc.get': { auth: 'user', fn: docGet_ },
+    'report.stats': { auth: 'user', fn: reportStats_ },
+    'art15.get': { auth: 'user', fn: art15Get_ },
+    'art15.save': { auth: 'user', write: true, fn: art15Save_ },
+
+    'op.apps': { auth: 'op', fn: opApps_ },
+    'op.decide': { auth: 'op', write: true, fn: opDecide_ },
+    'op.orgs': { auth: 'op', fn: opOrgs_ },
+    'op.status': { auth: 'op', write: true, fn: opStatus_ },
+    'op.inviteAdmin': { auth: 'op', write: true, fn: opInviteAdmin_ },
+    'op.log': { auth: 'op', fn: opLog_ }
+  };
+}
+
+function doGet() {
+  return out_({ ok: true, service: 'zdoi-platform' });
+}
+
+function doPost(e) {
+  let req;
+  try {
+    const raw = e.postData.contents;
+    if (raw.length > 300000) return out_({ ok: false, error: 'size', message: 'Данните са твърде големи.' });
+    req = JSON.parse(raw);
+  } catch (_) {
+    return out_({ ok: false, error: 'bad', message: 'Невалидна заявка.' });
+  }
+  return out_(dispatch_(req));
+}
+
+function out_(o) {
+  return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function dispatch_(req) {
+  try {
+    const all = actions_();
+    const name = String(req && req.action);
+    if (!Object.prototype.hasOwnProperty.call(all, name)) fail_('action', 'Непознато действие.');
+    const a = all[name];
+    const data = req.data && typeof req.data === 'object' ? req.data : {};
+    const ctx = a.auth === 'public' ? null : auth_(req.token, a.auth);
+    const run = () => a.fn(data, ctx);
+    return Object.assign({ ok: true, now: Date.now() }, a.write ? locked_(run) : run());
+  } catch (err) {
+    if (err && err.code) return { ok: false, error: err.code, message: err.message };
+    console.error(err && err.stack || err);
+    return { ok: false, error: 'server', message: 'Вътрешна грешка. Опитайте отново.' };
+  }
+}
+
+function fail_(code, message) {
+  const e = new Error(message || code);
+  e.code = code;
+  throw e;
+}
+
+function locked_(fn) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) fail_('busy', 'Системата е заета. Опитайте след малко.');
+  try { return fn(); } finally { lock.releaseLock(); }
+}
+
+/* ---------- еднократна настройка ---------- */
+
+function setup() {
+  const props = PropertiesService.getScriptProperties();
+  if (!props.getProperty('PEPPER')) props.setProperty('PEPPER', randomToken_() + randomToken_());
+  let folderId = props.getProperty('FOLDER_ID');
+  if (!folderId) {
+    folderId = DriveApp.createFolder('ЗДОИ4You – Платформа (данни)').getId();
+    props.setProperty('FOLDER_ID', folderId);
+  }
+  let masterId = props.getProperty('MASTER_ID');
+  if (!masterId) {
+    const ss = SpreadsheetApp.create('ЗДОИ4You – Платформа – главна таблица');
+    DriveApp.getFileById(ss.getId()).moveTo(DriveApp.getFolderById(folderId));
+    masterId = ss.getId();
+    props.setProperty('MASTER_ID', masterId);
+  }
+  const master = SpreadsheetApp.openById(masterId);
+  ['apps', 'orgs', 'ops', 'log', 'counters'].forEach(k => table_(master, k));
+  dropDefaultSheet_(master);
+  const email = String(Session.getEffectiveUser().getEmail() || '').toLowerCase();
+  props.setProperty('NOTIFY', props.getProperty('NOTIFY') || email);
+  const ops = read_(master, 'ops');
+  if (!ops.length) {
+    const invite = newInvite_(CFG.INVITE_DAYS * 24);
+    insert_(master, 'ops', { username: 'admin', name: 'Оператор', email: email, active: 'Да', inviteHash: invite.hash, inviteExp: invite.exp, createdAt: stamp_() });
+    const link = inviteLink_(CFG.OPERATOR_NO, 'admin', invite.token);
+    mail_(email, 'ЗДОИ4You Платформа – активиране на оператор',
+      'Номер: ' + CFG.OPERATOR_NO + '\nПотребител: admin\n\nЗадайте парола тук:\n' + link);
+    console.log('Активиране на оператора: ' + link);
+    return link;
+  }
+  console.log('Настройката вече е направена. Главна таблица: ' + master.getUrl());
+  return master.getUrl();
+}
+
+/* първият лист на нова таблица има различно име според езика на акаунта */
+function dropDefaultSheet_(ss) {
+  const ours = Object.keys(SCHEMA).map(k => SCHEMA[k][0]);
+  ss.getSheets().forEach(s => {
+    if (ours.indexOf(s.getName()) < 0 && s.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(s);
+  });
+}
