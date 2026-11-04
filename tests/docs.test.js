@@ -52,6 +52,47 @@ test('appeal clause follows the basis of the organization', () => {
   assert.ok(t.includes('чл. 40, ал. 2'));
 });
 
+const payload = over => ({ type: 'refuse', no: 'X', date: '2026-11-04', org, case: kase, f: Object.assign({}, fields, over) });
+const text = p => flatten(Docs.pdfDefinition(p, 'x').content);
+
+test('refusal grounds are the same in the browser and on the server', () => {
+  assert.deepEqual(Object.assign({}, load().t.REFUSAL), Docs.REFUSAL);
+});
+
+test('motives appear in decisions and letters, split into paragraphs, before the operative part', () => {
+  for (const type of ['grant', 'partial', 'refuse']) {
+    const t = text(Object.assign(payload({ motives: 'Първи мотив.\n\nВтори мотив.' }), { type }));
+    assert.ok(t.includes('МОТИВИ:'), type);
+    assert.ok(t.indexOf('Втори мотив.') < t.indexOf('РЕШИХ:'), type);
+  }
+  assert.ok(text(Object.assign(payload({ motives: 'Обосновка.' }), { type: 'noinfo' })).includes('Обосновка.'));
+  assert.ok(!text(payload({ motives: '' })).includes('МОТИВИ:'));
+  for (const type of ['grant', 'partial', 'refuse', 'clarify', 'noinfo']) assert.ok(Docs.DEFS[type].fields.some(f => f.k === 'motives'), type);
+});
+
+test('review before PDF: paragraphs can be changed, deleted and supplemented', () => {
+  const base = payload({});
+  const list = Docs.editableParagraphs(base);
+  assert.ok(list.length >= 5);
+  const i = list.findIndex(x => x.startsWith('ОТКАЗВАМ'));
+  const del = list.findIndex(x => x.includes('(чл. 39 ЗДОИ)'));
+  const t = text(payload({ edits: JSON.stringify({ [i]: 'ОТКАЗВАМ частично и с промяна.', [del]: '' }), extra: 'Добавен абзац едно.\n\nДобавен абзац две.' }));
+  assert.ok(t.includes('ОТКАЗВАМ частично и с промяна.'));
+  assert.ok(!t.includes('ОТКАЗВАМ да предоставя'));
+  assert.ok(!t.includes('(чл. 39 ЗДОИ)'));
+  assert.ok(t.includes('Добавен абзац едно.') && t.includes('Добавен абзац две.'));
+  assert.ok(t.indexOf('Добавен абзац две.') < t.indexOf('14-дневен'), 'before the appeal clause');
+  assert.deepEqual(Docs.editableParagraphs(payload({ edits: JSON.stringify({ 0: 'x' }) })), list, 'originals stay available');
+  assert.ok(text(payload({ edits: 'повреден json' })).includes('ОТКАЗВАМ да предоставя'), 'broken edits are ignored');
+});
+
+test('an authorized person is shown with the act under the signature', () => {
+  const t = text(payload({ signer: 'Петя Иванова', signerPosition: 'Секретар', signerAct: 'Заповед № 12 от 01.02.2026 г.' }));
+  assert.ok(t.includes('Петя Иванова') && t.includes('Заповед № 12') && t.includes('чл. 28, ал. 2'));
+  assert.ok(!t.includes('Иван Иванов'), 'head does not sign');
+  assert.ok(text(payload({})).includes('Иван Иванов'));
+});
+
 test('article 15 list depends on the basis of the organization', () => {
   assert.equal(Docs.art15Items('чл. 3, ал. 1').length, 17);
   assert.deepEqual(Docs.art15Items('чл. 3, ал. 2, т. 1').map(i => i[0]), [1, 4, 5, 6, 8, 11, 15, 16, 17]);

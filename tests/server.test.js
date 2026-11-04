@@ -462,6 +462,68 @@ test('tables grow past the default sheet size of Google (26 columns, 1000 rows)'
   assert.equal(g.call('case.get', { regNo: second.regNo }, a.token).case.applicantName, 'Петър Петров');
 });
 
+const sig = (over = {}) => Object.assign({ name: 'Петя Иванова', position: 'Секретар', act: 'Заповед № 12 от 01.02.2026 г.' }, over);
+
+test('authorized persons: only an administrator or operator adds them, and each organization has its own', () => {
+  const { g, op, a, b } = setupTwo();
+  assert.equal(g.call('signers.save', sig({ act: '' }), a.token).error, 'required');
+  assert.equal(g.call('signers.save', sig({ from: '2026-05-01', to: '2026-01-01' }), a.token).error, 'value');
+  const s = g.call('signers.save', sig(), a.token);
+  assert.equal(s.ok, true, JSON.stringify(s));
+  assert.equal(g.call('org.bootstrap', {}, a.token).signers.length, 1);
+  assert.equal(g.call('org.bootstrap', {}, b.token).signers.length, 0);
+  assert.equal(g.call('op.signer.save', Object.assign(sig({ name: 'От оператор' }), { no: a.no }), op).ok, true);
+  assert.equal(g.call('op.org.get', { no: a.no }, op).signers.length, 2);
+  assert.equal(g.call('op.signer.save', Object.assign(sig(), { no: a.no }), a.token).error, 'role');
+  const e = addStaff(g, a.token);
+  g.call('activate', { no: e[1], username: e[2], token: e[3], hash: HASH('e') });
+  const staff = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
+  assert.equal(g.call('signers.save', sig(), staff).error, 'role');
+  assert.equal(g.call('org.bootstrap', {}, staff).signers.length, 2, 'staff can see and choose them');
+});
+
+test('decisions take the signer from the list; forged names and invalid persons are refused', () => {
+  const { g, a, b } = setupTwo();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const refuse = (fields, date = '2026-06-01', token = a.token) => g.call('doc.create', { type: 'refuse', regNo: reg, title: 'x', date, fields: Object.assign({ groundKey: 't3', factual: 'факти' }, fields) }, token);
+  const id = g.call('signers.save', sig({ from: '2026-02-01', to: '2026-12-31' }), a.token).id;
+  const ok = refuse({ signerId: id });
+  assert.equal(ok.payload.f.signer, 'Петя Иванова');
+  assert.equal(ok.payload.f.signerAct, 'Заповед № 12 от 01.02.2026 г.');
+  assert.equal(refuse({ signerId: id }, '2027-01-15').error, 'signer', 'outside the validity period');
+  assert.equal(refuse({ signerId: 'nosuch' }).error, 'signer');
+  const forged = refuse({ signer: 'Подправено Име', signerPosition: 'Кмет', signerAct: 'Няма' });
+  assert.equal(forged.payload.f.signer, undefined, 'typed names are ignored');
+  const other = g.call('signers.save', sig(), b.token).id;
+  assert.equal(refuse({ signerId: other }).error, 'signer', 'person from another organization');
+  g.call('signers.save', sig({ id, active: false }), a.token);
+  assert.equal(refuse({ signerId: id }).error, 'signer', 'deactivated');
+});
+
+test('motives, review edits and added text are stored and come back the same', () => {
+  const { g, a } = setupTwo();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const fields = { groundKey: 't3', factual: 'факти', motives: 'Мотив едно.\n\nМотив две.', edits: JSON.stringify({ 2: 'променен абзац' }), extra: 'Добавка.' };
+  const r = g.call('doc.create', { type: 'refuse', regNo: reg, title: 'x', date: '2026-06-01', fields }, a.token);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const back = g.call('doc.get', { id: r.id }, a.token).payload.f;
+  assert.equal(back.motives, fields.motives);
+  assert.equal(back.edits, fields.edits);
+  assert.equal(back.extra, fields.extra);
+  const big = 'м'.repeat(8000);
+  const huge = g.call('doc.create', { type: 'refuse', regNo: reg, title: 'x', fields: { groundKey: 't3', factual: big, motives: big, extra: big, text: big, a1: big, a2: big, a3: big } }, a.token);
+  assert.equal(huge.error, 'size', 'too large for one cell is refused, not cut');
+});
+
+test('authorized persons table appears in organizations created before this version', () => {
+  const { g, a } = setupTwo();
+  const book = [...g.books.values()].find(x => x.name.includes(a.no));
+  book.deleteSheet(book.getSheetByName('Упълномощени лица'));
+  assert.equal(g.call('org.bootstrap', {}, a.token).signers.length, 0);
+  assert.equal(g.call('signers.save', sig(), a.token).ok, true);
+  assert.ok(book.getSheetByName('Упълномощени лица'));
+});
+
 test('honeypot silently drops bots', () => {
   const g = load(); operator(g);
   const r = apply(g, { hp: 'bot' });

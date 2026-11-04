@@ -178,7 +178,39 @@ function usersPublic_(ss) {
 
 function opOrgGet_(d, ctx) {
   const org = regOrg_(d.no), book = orgSheet_(org);
-  return { no: org.no, status: org.status, profile: profile_(book), users: usersPublic_(book) };
+  return { no: org.no, status: org.status, profile: profile_(book), users: usersPublic_(book), signers: signersOf_(book) };
+}
+
+/* ---------- лица, определени да издават решения (чл. 28, ал. 2 ЗДОИ) ---------- */
+
+const signersOf_ = ss => read_(ss, 'signers').map(s => { const o = Object.assign({}, s); delete o._row; return o; });
+
+function saveSigner_(ss, d, actor) {
+  const v = { name: line_(d.name, 120), position: line_(d.position, 120), act: line_(d.act, 300), from: isoDate_(d.from), to: isoDate_(d.to), active: d.active === false ? 'Не' : 'Да' };
+  if (!v.name || !v.position || !v.act) fail_('required', 'Попълнете име, длъжност и акта за определяне.');
+  if (v.from && v.to && v.from > v.to) fail_('value', 'Началната дата е след крайната.');
+  const id = str_(d.id, 16);
+  if (id) {
+    const cur = read_(ss, 'signers').find(s => s.id === id);
+    if (!cur) fail_('notfound', 'Лицето не е намерено.');
+    patch_(ss, 'signers', cur._row, v);
+    audit_(ss, actor, 'Променено упълномощено лице', v.name, v.act);
+    return { id: id };
+  }
+  const newId = randomToken_().slice(0, 16);
+  insert_(ss, 'signers', Object.assign({ id: newId, by: actor, at: stamp_() }, v));
+  audit_(ss, actor, 'Добавено упълномощено лице', v.name, v.act);
+  return { id: newId };
+}
+
+function signersSave_(d, ctx) {
+  return saveSigner_(ctx.ss(), d, ctx.username);
+}
+
+function opSignerSave_(d, ctx) {
+  const reg = regOrg_(d.no), r = saveSigner_(orgSheet_(reg), d, opActor_(ctx));
+  audit_(master_(), ctx.username, 'Упълномощено лице в организация', reg.no, line_(d.name, 120));
+  return r;
 }
 
 /* операторът добавя организация директно, без заявка */
@@ -252,7 +284,7 @@ function orgBootstrap_(d, ctx) {
   const users = read_(ss, 'users').filter(u => u.active === 'Да').map(u => ({ username: u.username, name: u.name }));
   const me = read_(ss, 'users').find(u => u.username === ctx.username);
   return {
-    profile: profile_(ss), users: users,
+    profile: profile_(ss), users: users, signers: signersOf_(ss),
     me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false }
   };
 }

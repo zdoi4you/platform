@@ -37,9 +37,15 @@
   const art15Items = basis => (basis === 'чл. 3, ал. 1' ? ART15 : ART15.filter(i => ART15_AL3.includes(i[0])));
 
   const signerFields = [
-    { k: 'signer', label: 'Подписващ (ако е различен от ръководителя)', hint: 'Лице, изрично определено от органа (чл. 28, ал. 2).' },
-    { k: 'signerPosition', label: 'Длъжност на подписващия' }
+    { k: 'signerId', label: 'Издава', type: 'signer', hint: 'Ръководителят или лице, определено по чл. 28, ал. 2. Лицата се добавят в „Организация“.' }
   ];
+  const decisionMotives = { k: 'motives', label: 'Мотиви', type: 'textarea', rows: 8, hint: 'Разделете абзаците с празен ред.' };
+  const letterMotives = { k: 'motives', label: 'Мотиви или обосновка (по желание)', type: 'textarea', rows: 5, hint: 'Разделете абзаците с празен ред.' };
+  const REFUSAL = {
+    t1: 'чл. 37, ал. 1, т. 1 ЗДОИ – класифицирана информация или друга защитена тайна, или случаите по чл. 13, ал. 2',
+    t2: 'чл. 37, ал. 1, т. 2 ЗДОИ – засягат се интересите на трето лице, което изрично е отказало предоставянето',
+    t3: 'чл. 37, ал. 1, т. 3 ЗДОИ – информацията е предоставена на заявителя през предходните 6 месеца'
+  };
   const decisionAccess = [
     { k: 'accessDays', label: 'Срок за достъп (дни от получаване на решението)', type: 'number', req: true, min: 30, value: '30', hint: 'Не по-малко от 30 дни (чл. 34, ал. 4).' },
     { k: 'place', label: 'Място за достъп', req: true, value: (c, o) => o.unitAddress },
@@ -67,7 +73,7 @@
     ] },
     forward: { group: 'Писма до заявителя', title: 'Препращане на заявлението (чл. 32)', subject: 'препращане на заявление за достъп до обществена информация', effect: 'Преписката се приключва с резултат „Препратено“.', fields: [
       { k: 'body', label: 'Орган или юридическо лице, към което се препраща', req: true },
-      { k: 'bodyAddress', label: 'Адрес на органа', req: true }
+      { k: 'bodyAddress', label: 'Адрес на органа', type: 'address', req: true }
     ] },
     noinfo: { group: 'Писма до заявителя', title: 'Няма исканата информация (чл. 33)', subject: 'липса на исканата информация', effect: 'Преписката се приключва с резултат „Няма информация“.', fields: [
       { k: 'note', label: 'Допълнително пояснение (по желание)', type: 'textarea' }
@@ -85,12 +91,13 @@
     ] },
     thirdparty: { group: 'Писма до трети лица', title: 'Искане за съгласие от трето лице (чл. 31)', subject: 'искане за съгласие за предоставяне на информация', effect: 'Записва се датата на искането. Искането се прави в 7-дневен срок от регистрирането (чл. 31, ал. 2).', fields: [
       { k: 'third', label: 'Трето лице', req: true },
-      { k: 'thirdAddress', label: 'Адрес на третото лице', req: true },
+      { k: 'thirdAddress', label: 'Адрес на третото лице', type: 'address', req: true },
       { k: 'info', label: 'Информацията, която го засяга', type: 'textarea', req: true },
       { k: 'by', label: 'Отговор до', type: 'date', req: true }
     ] },
     grant: { group: 'Решения', title: 'Решение за предоставяне на достъп', decision: true, effect: 'Статусът става „Решение издадено“. Срокът по чл. 28 спира да се следи.', fields: [
       { k: 'scope', label: 'Степен на осигурения достъп', req: true, value: 'Пълен достъп до исканата обществена информация.' },
+      decisionMotives,
       ...decisionAccess
     ] },
     partial: { group: 'Решения', title: 'Решение за частичен достъп (чл. 37, ал. 2)', decision: true, effect: 'Статусът става „Решение издадено“ с резултат „Частичен достъп“.', fields: [
@@ -98,11 +105,13 @@
       { k: 'withheld', label: 'До коя част не се предоставя достъп', type: 'textarea', req: true },
       groundField,
       { k: 'factual', label: 'Фактическо основание', type: 'textarea', req: true },
+      decisionMotives,
       ...decisionAccess
     ] },
     refuse: { group: 'Решения', title: 'Решение за отказ (чл. 38)', decision: true, effect: 'Статусът става „Решение издадено“ с резултат „Отказ“.', fields: [
       groundField,
-      { k: 'factual', label: 'Фактическо основание', type: 'textarea', req: true, rows: 6 }
+      { k: 'factual', label: 'Фактическо основание', type: 'textarea', req: true, rows: 6 },
+      decisionMotives
     ] },
     protocol: { group: 'Протоколи', title: 'Протокол за предоставяне на достъп (чл. 35, ал. 2)', effect: 'Преписката се приключва.', fields: [
       { k: 'given', label: 'Предоставена информация', type: 'textarea', req: true },
@@ -111,14 +120,37 @@
       { k: 'employee', label: 'Служител, който предоставя достъпа', req: true }
     ] }
   };
-  Object.keys(DEFS).filter(k => k !== 'protocol').forEach(k => { DEFS[k].fields = DEFS[k].fields.concat(signerFields); });
+  Object.keys(DEFS).filter(k => k !== 'protocol').forEach(k => {
+    const extra = DEFS[k].decision ? [] : [letterMotives];
+    DEFS[k].fields = DEFS[k].fields.concat(extra, signerFields);
+  });
   DEFS.report = { title: 'Годишен отчет по чл. 15, ал. 2 ЗДОИ', fields: [] };
   DEFS.art15 = { title: 'Информация по чл. 15 ЗДОИ', fields: [] };
 
   /* ---------- PDF ---------- */
 
-  /* датите завършват с „г.“, затова точката в края на изречението не се удвоява */
-  const P = (text, extra) => Object.assign({ text: String(text).replace(/ г\.\.(?=\s|$)/g, ' г.'), margin: [0, 0, 0, 8], alignment: 'justify' }, extra);
+  /*
+   * Всеки абзац получава пореден номер при изграждането. Така прегледът преди PDF може да покаже абзаците
+   * за редакция, а промените (f.edits) се прилагат по номер и документът се възпроизвежда същият и по-късно.
+   */
+  const track = { edits: {}, list: [], i: 0 };
+  const paraNode = (text, extra) => Object.assign({ text: String(text).replace(/ г\.\.(?=\s|$)/g, ' г.'), margin: [0, 0, 0, 8], alignment: 'justify' }, extra);
+  const P = (text, extra) => {
+    const node = paraNode(text, extra), idx = track.i++;
+    track.list.push(node.text);
+    if (Object.prototype.hasOwnProperty.call(track.edits, idx)) {
+      node.text = track.edits[idx];
+      if (!node.text) node.margin = [0, 0, 0, 0];
+    }
+    return node;
+  };
+  const paragraphs = t => String(t || '').split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  const motives = p => {
+    const list = paragraphs(p.f.motives);
+    return list.length ? [{ text: 'МОТИВИ:', bold: true, margin: [0, 6, 0, 6] }, ...list.map(t => P(t))] : [];
+  };
+  /* добавеният при прегледа текст е извън номерацията, за да не измества редакциите */
+  const extraText = p => paragraphs(p.f.extra).map(t => paraNode(t));
 
   function letterhead(o) {
     return [
@@ -140,7 +172,8 @@
     return { margin: [0, 26, 0, 0], unbreakable: true, stack: [
       { text: '....................................' },
       { text: f.signer || o.headName, bold: true, margin: [0, 2, 0, 0] },
-      { text: f.signerPosition || o.headPosition }
+      { text: f.signerPosition || o.headPosition },
+      ...(f.signerAct ? [{ text: `Лице, определено по чл. 28, ал. 2 ЗДОИ: ${f.signerAct}`, fontSize: 9, color: '#44546A', margin: [0, 2, 0, 0] }] : [])
     ] };
   }
 
@@ -163,6 +196,8 @@
       { text: [{ text: 'ОТНОСНО: ', bold: true }, opts.subject], margin: [0, 0, 0, 12] },
       P(opts.salute || salute(c)),
       ...opts.body.map(t => (typeof t === 'string' ? P(t) : t)),
+      ...motives(p),
+      ...extraText(p),
       { text: 'С уважение,', margin: [0, 8, 0, 0] },
       signature(p)
     ];
@@ -240,31 +275,35 @@
     letter: p => letter(p, { subject: p.f.subjectLine, body: [p.f.text] }),
     grant: p => [
       ...decisionHead(p, 'за предоставяне на достъп до обществена информация'),
+      ...motives(p),
       P('На основание чл. 28, ал. 2 във връзка с чл. 34 от Закона за достъп до обществена информация'),
       { text: 'РЕШИХ:', bold: true, alignment: 'center', margin: [0, 6, 0, 8] },
       P('ПРЕДОСТАВЯМ достъп до исканата обществена информация при следните условия:'),
-      accessPoints(p), ...accessNotes(p),
+      accessPoints(p), ...accessNotes(p), ...extraText(p),
       P(appealClause(p)), signature(p)
     ],
     partial: p => [
       ...decisionHead(p, 'за предоставяне на частичен достъп до обществена информация'),
       P(`Правно основание за ограничаването: ${p.f.groundText}, във връзка с чл. 37, ал. 2 ЗДОИ.`),
       P(`Фактическо основание: ${p.f.factual}`),
+      ...motives(p),
       P('На основание чл. 28, ал. 2, чл. 34 и чл. 37, ал. 2 от Закона за достъп до обществена информация'),
       { text: 'РЕШИХ:', bold: true, alignment: 'center', margin: [0, 6, 0, 8] },
       P(`ОТКАЗВАМ достъп до следната част от информацията: ${p.f.withheld}`),
       P('ПРЕДОСТАВЯМ достъп до останалата част при следните условия:'),
-      accessPoints(p), ...accessNotes(p),
+      accessPoints(p), ...accessNotes(p), ...extraText(p),
       P(appealClause(p)), signature(p)
     ],
     refuse: p => [
       ...decisionHead(p, 'за отказ за предоставяне на достъп до обществена информация'),
       P(`Правно основание за отказа: ${p.f.groundText}.`),
       P(`Фактическо основание за отказа: ${p.f.factual}`),
+      ...motives(p),
       P('На основание чл. 28, ал. 2 и чл. 38 от Закона за достъп до обществена информация'),
       { text: 'РЕШИХ:', bold: true, alignment: 'center', margin: [0, 6, 0, 8] },
       P('ОТКАЗВАМ да предоставя достъп до исканата обществена информация.'),
       P('Решението се връчва срещу подпис, изпраща се по пощата с обратна разписка или на посочения профил в системата за сигурно електронно връчване (чл. 39 ЗДОИ).'),
+      ...extraText(p),
       P(appealClause(p)), signature(p)
     ],
     protocol: p => {
@@ -279,6 +318,7 @@
         P(`Предоставена информация: ${p.f.given}`),
         P(`Форма на достъп: ${p.f.accessForm}.`),
         ...(p.f.paid ? [P(`Платени разходи и платежен документ: ${p.f.paid}`)] : []),
+        ...extraText(p),
         { margin: [0, 34, 0, 0], columns: [
           { stack: [{ text: 'Заявител:', bold: true }, { text: '\n.............................' }, { text: c.applicantName }] },
           { stack: [{ text: 'Служител:', bold: true }, { text: '\n.............................' }, { text: p.f.employee || '' }] }
@@ -331,16 +371,30 @@
     }
   };
 
-  function pdfDefinition(payload, logo) {
+  function buildContent(payload) {
     const build = BUILD[payload.type];
     if (!build) throw new Error('Непознат документ: ' + payload.type);
+    let edits = {};
+    try { edits = JSON.parse((payload.f && payload.f.edits) || '{}') || {}; } catch (e) { edits = {}; }
+    Object.assign(track, { edits, list: [], i: 0 });
+    return build(payload);
+  }
+
+  /* абзаците на документа за прегледа преди PDF, без вече нанесените промени */
+  function editableParagraphs(payload) {
+    buildContent(Object.assign({}, payload, { f: Object.assign({}, payload.f, { edits: '{}' }) }));
+    return track.list.slice();
+  }
+
+  function pdfDefinition(payload, logo) {
+    const content = buildContent(payload);
     return {
       pageSize: 'A4',
       pageMargins: [50, 40, 50, 54],
       info: { title: `${DEFS[payload.type].title} ${payload.no}`, author: payload.org.name, creator: 'ЗДОИ4You Платформа' },
       images: { logo: logo },
       defaultStyle: { font: 'Roboto', fontSize: 10.5, lineHeight: 1.22, color: '#111827' },
-      content: build(payload),
+      content,
       footer: (page, count) => ({
         margin: [50, 14, 50, 0], fontSize: 8, color: '#5A6B85',
         columns: [{ text: 'Генерирано чрез платформата ЗДОИ4You · platform.zdoi4you.eu' }, { text: `стр. ${page} от ${count}`, alignment: 'right', width: 70 }]
@@ -350,7 +404,7 @@
 
   const fileName = p => `${p.no}.pdf`.replace(/[^\p{L}\p{N}._-]+/gu, '_');
 
-  const api = { DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, pdfDefinition, fileName, fmt };
+  const api = { DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, pdfDefinition, editableParagraphs, fileName, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Docs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

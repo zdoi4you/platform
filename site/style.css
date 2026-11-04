@@ -130,7 +130,11 @@ tr.link:hover td { background: var(--gray-bg); }
 
 dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); padding: 20px; width: min(680px, calc(100vw - 24px)); max-height: calc(100vh - 32px); }
 dialog::backdrop { background: rgba(5, 12, 24, .55); }
+dialog.wide { width: min(860px, calc(100vw - 24px)); }
 dialog h2 { margin-bottom: 12px; }
+.addr { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 10px; padding: 12px; gap: 10px; }
+.addr-title { font-weight: 600; font-size: 14px; }
+[hidden] { display: none !important; }
 dialog .actions { justify-content: flex-end; margin-top: 16px; }
 
 #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20; background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 8px; font-size: 14px; max-width: calc(100vw - 32px); opacity: 0; pointer-events: none; transition: opacity .2s; }

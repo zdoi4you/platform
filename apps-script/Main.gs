@@ -37,6 +37,7 @@ function actions_() {
 
     'org.bootstrap': { auth: 'user', fn: orgBootstrap_ },
     'org.save': { auth: 'admin', write: true, fn: orgSave_ },
+    'signers.save': { auth: 'admin', write: true, fn: signersSave_ },
     'users.list': { auth: 'admin', fn: usersList_ },
     'users.save': { auth: 'admin', write: true, fn: usersSave_ },
     'users.invite': { auth: 'admin', write: true, fn: usersInvite_ },
@@ -62,6 +63,7 @@ function actions_() {
     'op.org.get': { auth: 'op', fn: opOrgGet_ },
     'op.org.create': { auth: 'op', write: true, fn: opOrgCreate_ },
     'op.org.save': { auth: 'op', write: true, fn: opOrgSave_ },
+    'op.signer.save': { auth: 'op', write: true, fn: opSignerSave_ },
     'op.user.save': { auth: 'op', write: true, fn: opUserSave_ },
     'op.user.password': { auth: 'op', write: true, fn: opUserPassword_ },
     'op.log': { auth: 'op', fn: opLog_ }

@@ -152,8 +152,10 @@ function docCreate_(d, ctx) {
   if (missing.length) fail_('profile', 'Попълнете всички данни на организацията, преди да генерирате документи.');
   const raw = d.fields && typeof d.fields === 'object' ? d.fields : {};
   const f = {};
-  Object.keys(raw).slice(0, 40).forEach(k => { f[str_(k, 40)] = str_(raw[k], 8000); });
+  Object.keys(raw).slice(0, 40).forEach(k => { f[str_(k, 40)] = str_(raw[k], k === 'edits' ? 40000 : 8000); });
   def.need.forEach(k => { if (!f[k]) fail_('required', 'Попълнете всички задължителни полета.'); });
+  // подписващият идва само от списъка на организацията; ръчно подадено име се пренебрегва
+  ['signer', 'signerPosition', 'signerAct'].forEach(k => delete f[k]);
   ['by'].forEach(k => { if (f[k]) f[k] = isoDate_(f[k]); });
   if (f.accessDays !== undefined && f.accessDays !== '' && (!/^\d+$/.test(f.accessDays) || Number(f.accessDays) < 30)) {
     fail_('accessDays', 'Срокът за достъп не може да е по-кратък от 30 дни от получаване на решението (чл. 34, ал. 4).');
@@ -164,6 +166,13 @@ function docCreate_(d, ctx) {
   }
   const date = isoDate_(d.date) || todayIso_();
   const year = date.slice(0, 4);
+  if (f.signerId) {
+    const s = read_(ss, 'signers').find(x => x.id === f.signerId);
+    if (!s || s.active !== 'Да' || (s.from && s.from > date) || (s.to && s.to < date)) {
+      fail_('signer', 'Избраното лице не е упълномощено към датата на документа.');
+    }
+    f.signer = s.name; f.signerPosition = s.position; f.signerAct = s.act;
+  }
   let c = null;
   if (!def.noCase) c = findCase_(ss, d.regNo);
   const no = line_(d.no, 60) || def.cls + '-' + year + '-' + String(nextCounter_(ss, 'doc-' + def.cls + '-' + year)).padStart(4, '0');
