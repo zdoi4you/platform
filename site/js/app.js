@@ -162,6 +162,7 @@ function addressField(def, value, seat, ctx) {
       if (!p.postcode || !p.oblast || !p.municipality || !p.city) msg = 'Изберете област, община и населено място и въведете пощенски код.';
     }
     output.setCustomValidity(msg);
+    if (oblastOut && parseAddress(v).oblast) oblastOut.value = parseAddress(v).oblast;
   };
   output.addEventListener('input', checkComplete);
   const loadStreets = async s => {
@@ -610,7 +611,7 @@ function caseFields(users) {
       { k: 'applicantType', label: 'Вид заявител', type: 'select', options: APPLICANT_TYPE, req: true },
       { k: 'applicantName', label: 'Три имена или наименование', req: true },
       { k: 'applicantSeat', label: 'Седалище (за юридически лица)' },
-      { k: 'applicantAddress', label: 'Адрес за кореспонденция (адрес или имейл е задължителен, чл. 25, ал. 1, т. 4). По областта се предлага компетентният съд.', type: 'address', oblastName: 'applicantOblast' },
+      { k: 'applicantAddress', label: 'Адрес за кореспонденция (адрес или имейл е задължителен, чл. 25, ал. 1, т. 4). По него се определя съдът в решенията.', type: 'address', oblastName: 'applicantOblast' },
       { k: 'applicantEmail', label: 'Имейл', type: 'email' },
       { k: 'applicantPhone', label: 'Телефон', type: 'tel' }
     ],

@@ -161,6 +161,14 @@ function courtForOblast_(oblast) {
 }
 const OBLASTS_ = ['Благоевград', 'Бургас', 'Варна', 'Велико Търново', 'Видин', 'Враца', 'Габрово', 'Добрич', 'Кърджали', 'Кюстендил', 'Ловеч', 'Монтана', 'Пазарджик', 'Перник', 'Плевен', 'Пловдив', 'Разград', 'Русе', 'Силистра', 'Сливен', 'Смолян', 'София', 'София (столица)', 'Стара Загора', 'Търговище', 'Хасково', 'Шумен', 'Ямбол'];
 
+/* областта идва от адреса на заявителя; запазената област е само резервен вариант */
+function oblastOfCase_(c) {
+  const m = /(?:^|,\s*)обл\.\s*([^,]+)/.exec(c.applicantAddress || '');
+  const fromAddress = m ? m[1].trim() : '';
+  if (OBLASTS_.indexOf(fromAddress) >= 0) return fromAddress;
+  return OBLASTS_.indexOf(c.applicantOblast) >= 0 ? c.applicantOblast : '';
+}
+
 function docCreate_(d, ctx) {
   const ss = ctx.ss(), type = str_(d.type, 20);
   if (!Object.prototype.hasOwnProperty.call(DOC_TYPES, type)) fail_('value', 'Непознат вид документ.');
@@ -172,7 +180,7 @@ function docCreate_(d, ctx) {
   Object.keys(raw).slice(0, 40).forEach(k => { f[str_(k, 40)] = str_(raw[k], k === 'edits' ? 40000 : 8000); });
   const c = def.noCase ? null : findCase_(ss, d.regNo);
   if (def.decision) {
-    if (!f.court && c && OBLASTS_.indexOf(c.applicantOblast) >= 0) f.court = courtForOblast_(c.applicantOblast);
+    if (!f.court && c && oblastOfCase_(c)) f.court = courtForOblast_(oblastOfCase_(c));
     if (f.court && OBLASTS_.map(courtForOblast_).indexOf(f.court) < 0) fail_('court', 'Изберете административен съд от списъка.');
     if (!f.court) fail_('court', 'Посочете компетентния административен съд според адреса на адресата.');
   }

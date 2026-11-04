@@ -74,6 +74,14 @@ test('documents carry the full addresses: postcode, oblast, municipality, settle
   assert.ok(letter.includes('седалище: София') && letter.includes('тел. 0888') && letter.includes('a@b.bg'));
 });
 
+test('the decision form suggests the court from the written address', () => {
+  const field = Docs.DEFS.refuse.fields.find(f => f.k === 'court');
+  assert.equal(field.value({ applicantAddress: 'п.к. 9000, обл. Варна, общ. Варна, гр. Варна', applicantOblast: 'Русе' }), 'Административен съд – Варна');
+  assert.equal(field.value({ applicantAddress: 'ул. 1', applicantOblast: 'Русе' }), 'Административен съд – Русе');
+  assert.equal(field.value({ applicantAddress: 'ул. 1', applicantOblast: '' }), '');
+  assert.ok(field.options.includes(field.value({ applicantAddress: 'обл. София (столица), гр. София' })));
+});
+
 test('the appeal clause names the court of the addressee, and old documents keep theirs', () => {
   assert.ok(text(payload({ court: 'Административен съд – Варна' })).includes('Административен съд – Варна'));
   assert.ok(text(payload({})).includes('Административен съд София-град'), 'stored documents without a court field');

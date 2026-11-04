@@ -42,7 +42,13 @@
   /* компетентният съд се определя по адреса на адресата */
   const OBLASTS = ['Благоевград', 'Бургас', 'Варна', 'Велико Търново', 'Видин', 'Враца', 'Габрово', 'Добрич', 'Кърджали', 'Кюстендил', 'Ловеч', 'Монтана', 'Пазарджик', 'Перник', 'Плевен', 'Пловдив', 'Разград', 'Русе', 'Силистра', 'Сливен', 'Смолян', 'София', 'София (столица)', 'Стара Загора', 'Търговище', 'Хасково', 'Шумен', 'Ямбол'];
   const courtForOblast = o => (o === 'София (столица)' ? 'Административен съд София-град' : o === 'София' ? 'Административен съд София-област' : o ? `Административен съд – ${o}` : '');
-  const courtField = { k: 'court', label: 'Компетентен административен съд', type: 'select', req: true, options: OBLASTS.map(courtForOblast), value: c => courtForOblast(c.applicantOblast), hint: 'Предлага се по областта от адреса на адресата. Проверете го, ако адресатът е посочил друг адрес.' };
+  /* областта идва от адреса на заявителя; запазената област е само резервен вариант */
+  const oblastOf = c => {
+    const m = /(?:^|,\s*)обл\.\s*([^,]+)/.exec(c.applicantAddress || '');
+    const fromAddress = m ? m[1].trim() : '';
+    return OBLASTS.includes(fromAddress) ? fromAddress : (OBLASTS.includes(c.applicantOblast) ? c.applicantOblast : '');
+  };
+  const courtField = { k: 'court', label: 'Компетентен административен съд', type: 'select', req: true, options: OBLASTS.map(courtForOblast), value: c => courtForOblast(oblastOf(c)), hint: 'Съдът се определя по адреса на заявителя и се посочва в решението. Ако заявителят няма адрес в преписката, изберете съда ръчно.' };
   const decisionMotives = { k: 'motives', label: 'Мотиви', type: 'textarea', rows: 8, hint: 'Разделете абзаците с празен ред.' };
   const letterMotives = { k: 'motives', label: 'Мотиви или обосновка (по желание)', type: 'textarea', rows: 5, hint: 'Разделете абзаците с празен ред.' };
   const REFUSAL = {
@@ -417,7 +423,7 @@
 
   const fileName = p => `${p.no}.pdf`.replace(/[^\p{L}\p{N}._-]+/gu, '_');
 
-  const api = { orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, OBLASTS, courtForOblast, pdfDefinition, editableParagraphs, fileName, fmt };
+  const api = { orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Docs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

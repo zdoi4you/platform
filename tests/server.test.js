@@ -587,6 +587,32 @@ test('the competent court follows the address of the addressee', () => {
   assert.equal(g.call('doc.create', { type: 'noinfo', regNo: reg, title: 'x', fields: {} }, a.token).ok, true, 'letters need no court');
 });
 
+test('the court follows the written address of the applicant, not a stale saved oblast', () => {
+  const { g, a } = setupTwo();
+  const make = over => {
+    const reg = g.call('case.create', caseData(over), a.token).regNo;
+    return g.call('doc.create', { type: 'refuse', regNo: reg, title: 'x', fields: { groundKey: 't3', factual: 'факти' } }, a.token);
+  };
+  assert.equal(make({ applicantAddress: 'п.к. 9000, обл. Варна, общ. Варна, гр. Варна, ул. 1', applicantOblast: 'Русе' }).payload.f.court, 'Административен съд – Варна');
+  assert.equal(make({ applicantAddress: 'п.к. 1000, обл. София (столица), общ. Столична, гр. София', applicantOblast: '' }).payload.f.court, 'Административен съд София-град');
+  assert.equal(make({ applicantAddress: 'обл. София, общ. Самоков, гр. Самоков', applicantOblast: '' }).payload.f.court, 'Административен съд София-област');
+  assert.equal(make({ applicantAddress: 'ул. Без област 1', applicantOblast: 'Плевен' }).payload.f.court, 'Административен съд – Плевен', 'fallback for old cases');
+  assert.equal(make({ applicantAddress: 'ул. Без област 1', applicantOblast: '' }).error, 'court');
+});
+
+test('the court is not organization data, even if an older profile still stores one', () => {
+  const { g, op, a } = setupTwo();
+  const book = [...g.books.values()].find(x => x.name.includes(a.no));
+  const sheet = book.getSheetByName('Профил');
+  sheet.getRange(sheet.getLastRow() + 1, 1, 1, 2).setValues([['court', 'Стар съд']]);
+  assert.equal('court' in g.call('org.bootstrap', {}, a.token).profile, false);
+  assert.equal('court' in g.call('op.org.get', { no: a.no }, op).profile, false);
+  const reg = g.call('case.create', caseData({ applicantOblast: 'Варна', applicantAddress: 'ул. 1' }), a.token).regNo;
+  const doc = g.call('doc.create', { type: 'refuse', regNo: reg, title: 'x', fields: { groundKey: 't3', factual: 'факти' } }, a.token);
+  assert.equal(doc.payload.org.court, undefined);
+  assert.equal(doc.payload.f.court, 'Административен съд – Варна');
+});
+
 test('third-party deadlines are calculated (art. 31)', () => {
   const { g, a } = setupTwo();
   const reg = g.call('case.create', caseData({ regDate: '2026-11-02' }), a.token).regNo;

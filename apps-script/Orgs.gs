@@ -341,7 +341,8 @@ function opUserPassword_(d, ctx) {
 
 function profile_(ss) {
   const p = {};
-  read_(ss, 'profile').forEach(r => { p[r.key] = r.value; });
+  // съдът вече не е данни на организацията: определя се за всяко решение по адреса на заявителя
+  read_(ss, 'profile').forEach(r => { if (r.key !== 'court') p[r.key] = r.value; });
   return p;
 }
 
