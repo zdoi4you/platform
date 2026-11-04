@@ -10,7 +10,15 @@ const orgData = (over = {}) => Object.assign({
 }, over);
 const HASH = c => c.repeat(44);
 const tokenOf = link => link.split('/').pop();
-const lastLink = g => /https:\S+#\/activate\/\S+/.exec(g.mails.filter(m => /activate/.test(m.body)).at(-1).body)[0];
+const parts = link => /activate\/(\d+)\/([^/]+)\/(\w+)/.exec(link);
+let counter = 1000000;
+const newNo = g => { const b = String(counter++); return b + g.t.luhn_(b); };
+const apply = (g, over) => g.call('public.apply', Object.assign(orgData(over), { no: newNo(g), hash: HASH('p') }, over));
+const addStaff = (g, adminToken, username = 'emp1') => {
+  const r = g.call('users.save', { isNew: true, username, name: 'Служител', position: 'Експерт', email: 'emp@example.org', role: 'Служител' }, adminToken);
+  assert.equal(r.created, true, JSON.stringify(r));
+  return parts(r.link);
+};
 
 function operator(g) {
   const link = g.setup();
@@ -19,16 +27,14 @@ function operator(g) {
   return g.call('login', { no: '00000000', username: 'admin', hash: HASH('o') }).token;
 }
 function approve(g, op, over) {
-  const a = g.call('public.apply', orgData(over));
+  const a = apply(g, over);
   assert.equal(a.ok, true, JSON.stringify(a));
   const d = g.call('op.decide', { id: a.id, approve: true }, op);
   assert.equal(d.ok, true, JSON.stringify(d));
-  const link = lastLink(g);
-  const m = /activate\/(\d+)\/([^/]+)\/(\w+)/.exec(link);
-  assert.equal(g.call('activate', { no: m[1], username: m[2], token: m[3], hash: HASH('p') }).ok, true);
-  const l = g.call('login', { no: m[1], username: m[2], hash: HASH('p') });
+  const username = (over && over.adminUsername) || 'mpetrova';
+  const l = g.call('login', { no: d.no, username, hash: HASH('p') });
   assert.equal(l.ok, true, JSON.stringify(l));
-  return { no: d.no, token: l.token, username: m[2] };
+  return { no: d.no, token: l.token, username };
 }
 const caseData = (over = {}) => Object.assign({
   kind: 'Достъп до обществена информация', regDate: '2026-11-02', channel: 'Писмено', applicantType: 'Гражданин', applicantName: 'Петър Петров',
@@ -59,25 +65,85 @@ test('holidays and terms: deadline ending on non-working day moves forward', () 
 test('registration requires all organization data and declaration', () => {
   const g = load(); operator(g);
   for (const k of ['address', 'headName', 'unitEmail', 'court', 'adminEmail']) {
-    const r = g.call('public.apply', orgData({ [k]: '' }));
+    const r = apply(g, { [k]: '' });
     assert.equal(r.ok, false, k);
   }
-  assert.equal(g.call('public.apply', orgData({ declare: false })).ok, false);
-  assert.equal(g.call('public.apply', orgData({ eik: '123456789' })).error, 'eik');
+  assert.equal(apply(g, { declare: false }).ok, false);
+  assert.equal(apply(g, { eik: '123456789' }).error, 'eik');
+  assert.equal(apply(g, { hash: '' }).error, 'value');
+  assert.equal(apply(g, { no: '00000000' }).error, 'value');
+  assert.equal(apply(g, { no: '12345678' }).error, 'value', 'wrong check digit');
+});
+
+test('organizations never receive access data by email', () => {
+  const { g, op, a } = setupTwo();
+  const b = addStaff(g, a.token);
+  g.call('users.invite', { username: 'emp1' }, a.token);
+  g.call('op.inviteAdmin', { no: a.no }, op);
+  const rejected = apply(g, { eik: '121758615', name: 'Трета' });
+  g.call('op.decide', { id: rejected.id, approve: false, reason: 'x' }, op);
+  const orgMails = g.mails.filter(m => m.to !== 'owner@example.org');
+  assert.ok(orgMails.length > 0);
+  orgMails.forEach(m => {
+    const text = m.subject + ' ' + m.body;
+    assert.ok(!/activate/.test(text), 'без връзка: ' + text);
+    assert.ok(!text.includes(a.no), 'без номер на организация: ' + text);
+    assert.ok(!text.includes(a.username) && !text.includes(b[3]), 'без потребител: ' + text);
+    assert.ok(!/парола:/i.test(text), text);
+  });
+  assert.equal(g.call('forgot', { no: a.no, username: a.username }).error, 'action');
+});
+
+test('administrator password chosen at registration works only after approval', () => {
+  const g = load(), op = operator(g);
+  const no = newNo(g);
+  const a = g.call('public.apply', Object.assign(orgData(), { no, hash: HASH('z') }));
+  assert.equal(a.ok, true, JSON.stringify(a));
+  assert.equal(g.call('login', { no, username: 'mpetrova', hash: HASH('z') }).error, 'login');
+  const pending = JSON.stringify(g.call('op.apps', {}, op));
+  assert.ok(!/"hash"|"salt"/.test(pending), 'hash not shown to the operator');
+  assert.equal(g.call('op.decide', { id: a.id, approve: true }, op).no, no);
+  assert.equal(g.call('login', { no, username: 'mpetrova', hash: HASH('z') }).ok, true);
+  assert.equal(g.call('login', { no, username: 'mpetrova', hash: HASH('y') }).error, 'login');
+  const master = [...g.books.values()].find(x => /главна/.test(x.name)).getSheetByName('Заявки за регистрация');
+  const hashCol = master.cells[0].indexOf('Хеш');
+  assert.equal(master.cells[1][hashCol], '', 'hash removed from master after approval');
+});
+
+test('a taken organization number asks the browser to retry', () => {
+  const g = load(); operator(g);
+  const no = newNo(g);
+  assert.equal(g.call('public.apply', Object.assign(orgData(), { no, hash: HASH('z') })).ok, true);
+  const r = g.call('public.apply', Object.assign(orgData({ eik: '121758615' }), { no, hash: HASH('z') }));
+  assert.equal(r.error, 'retry');
+});
+
+test('new columns are added to a master table created by an older version', () => {
+  const g = load(); operator(g);
+  const master = [...g.books.values()].find(x => /главна/.test(x.name));
+  const sheet = master.insertSheet('стар');
+  master.deleteSheet(master.getSheetByName('Заявки за регистрация'));
+  sheet.name = 'Заявки за регистрация';
+  const old = ['№', 'Подадена', 'Статус', 'Организация', 'ЕИК/БУЛСТАТ', 'Вид', 'Официален имейл', 'Данни (JSON)', 'Причина за отказ', 'Решил', 'Дата на решение', 'Номер на организация'];
+  sheet.getRange(1, 1, 1, old.length).setValues([old]);
+  g.ctx.resetHeaders(); // ново изпълнение на скрипта
+  const a = apply(g);
+  assert.equal(a.ok, true, JSON.stringify(a));
+  assert.equal(sheet.cells[0].at(-1), 'Хеш');
 });
 
 test('organization cannot log in before approval; duplicates are rejected', () => {
   const g = load(), op = operator(g);
-  const a = g.call('public.apply', orgData());
+  const a = apply(g);
   assert.equal(a.ok, true);
-  assert.equal(g.call('public.apply', orgData()).error, 'duplicate');
+  assert.equal(apply(g).error, 'duplicate');
   assert.equal(g.call('op.apps', {}, op).apps[0].status, 'Чака одобрение');
   assert.equal(g.books.size, 1, 'no organization spreadsheet before approval');
 });
 
 test('rejection records reason and creates no spreadsheet', () => {
   const g = load(), op = operator(g);
-  const a = g.call('public.apply', orgData());
+  const a = apply(g);
   assert.equal(g.call('op.decide', { id: a.id, approve: false }, op).error, 'required');
   assert.equal(g.call('op.decide', { id: a.id, approve: false, reason: 'Неверни данни' }, op).ok, true);
   assert.equal(g.call('op.apps', {}, op).apps[0].status, 'Отказана');
@@ -134,25 +200,20 @@ test('lockout after repeated failures, then recovery', () => {
 });
 
 test('invitation is single use and expires', () => {
-  const g = load(), op = operator(g);
-  const app = g.call('public.apply', orgData());
-  g.call('op.decide', { id: app.id, approve: true }, op);
-  const m = /activate\/(\d+)\/([^/]+)\/(\w+)/.exec(lastLink(g));
-  assert.equal(g.call('login', { no: m[1], username: m[2], hash: HASH('p') }).error, 'login', 'no password before activation');
-  assert.equal(g.call('activate', { no: m[1], username: m[2], token: m[3], hash: HASH('p') }).ok, true);
+  const { g, a } = setupTwo();
+  const m = addStaff(g, a.token);
+  assert.equal(g.call('login', { no: m[1], username: m[2], hash: HASH('e') }).error, 'login', 'no password before activation');
+  assert.equal(g.call('activate', { no: m[1], username: m[2], token: m[3], hash: HASH('e') }).ok, true);
   assert.equal(g.call('activate', { no: m[1], username: m[2], token: m[3], hash: HASH('q') }).error, 'invite');
-  const u = g.call('login', { no: m[1], username: m[2], hash: HASH('p') }).token;
-  const r = g.call('users.save', { isNew: true, username: 'emp1', name: 'Служител', position: 'Експерт', email: 'emp@example.org', role: 'Служител' }, u);
-  assert.equal(r.created, true);
-  const e = /activate\/(\d+)\/([^/]+)\/(\w+)/.exec(lastLink(g));
+  assert.equal(g.call('login', { no: m[1], username: m[2], hash: HASH('e') }).ok, true);
+  const e = addStaff(g, g.call('login', { no: a.no, username: a.username, hash: HASH('p') }).token, 'emp2');
   g.advance(8 * 864e5);
   assert.equal(g.call('activate', { no: e[1], username: e[2], token: e[3], hash: HASH('e') }).error, 'invite');
 });
 
 test('roles: staff cannot administer, organization cannot reach operator actions', () => {
   const { g, a } = setupTwo();
-  g.call('users.save', { isNew: true, username: 'emp1', name: 'Служител', position: 'Експерт', email: 'emp@example.org', role: 'Служител' }, a.token);
-  const e = /activate\/(\d+)\/([^/]+)\/(\w+)/.exec(lastLink(g));
+  const e = addStaff(g, a.token);
   g.call('activate', { no: e[1], username: e[2], token: e[3], hash: HASH('e') });
   const staff = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
   assert.equal(g.call('case.create', caseData(), staff).ok, true);
@@ -168,8 +229,7 @@ test('deactivated user and suspended organization lose access immediately', () =
   assert.equal(g.call('op.status', { no: b.no, status: 'Спряна' }, op).ok, true);
   assert.equal(g.call('case.list', {}, b.token).error, 'session');
   assert.equal(g.call('login', { no: b.no, username: b.username, hash: HASH('p') }).error, 'login');
-  g.call('users.save', { isNew: true, username: 'emp1', name: 'С', position: 'Е', email: 'e@example.org', role: 'Служител' }, a.token);
-  const e = /activate\/(\d+)\/([^/]+)\/(\w+)/.exec(lastLink(g));
+  const e = addStaff(g, a.token);
   g.call('activate', { no: e[1], username: e[2], token: e[3], hash: HASH('e') });
   const staff = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
   assert.equal(g.call('case.list', {}, staff).ok, true);
@@ -293,17 +353,25 @@ test('article 15 items are saved per item and validated', () => {
   assert.equal(items[0].text, 'Ново');
 });
 
-test('forgot password responds the same for existing and unknown accounts', () => {
-  const { g, a } = setupTwo();
+test('a forgotten password is reset with a one-time link from an administrator or the operator', () => {
+  const { g, op, a } = setupTwo();
+  const e = addStaff(g, a.token);
+  g.call('activate', { no: e[1], username: e[2], token: e[3], hash: HASH('e') });
+  const staffLink = parts(g.call('users.invite', { username: 'emp1' }, a.token).link);
+  assert.equal(g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).ok, true, 'old password works until reset');
+  assert.equal(g.call('activate', { no: staffLink[1], username: staffLink[2], token: staffLink[3], hash: HASH('n') }).ok, true);
+  assert.equal(g.call('login', { no: a.no, username: 'emp1', hash: HASH('n') }).ok, true);
+  const adminLink = parts(g.call('op.inviteAdmin', { no: a.no }, op).link);
+  assert.equal(adminLink[2], a.username);
+  assert.equal(g.call('activate', { no: adminLink[1], username: adminLink[2], token: adminLink[3], hash: HASH('m') }).ok, true);
+  assert.equal(g.call('login', { no: a.no, username: a.username, hash: HASH('m') }).ok, true);
+});
+
+test('operator password can be reset only from the script editor', () => {
+  const g = load(); operator(g);
   const before = g.mails.length;
-  const x = g.call('forgot', { no: a.no, username: a.username });
-  const y = g.call('forgot', { no: a.no, username: 'nobody' });
-  assert.deepEqual(Object.keys(x).sort(), Object.keys(y).sort());
-  assert.equal(g.mails.length, before + 1);
-  const m = /activate\/(\d+)\/([^/]+)\/(\w+)/.exec(lastLink(g));
-  assert.equal(g.call('login', { no: a.no, username: a.username, hash: HASH('p') }).ok, true, 'old password still works until reset');
-  assert.equal(g.call('activate', { no: m[1], username: m[2], token: m[3], hash: HASH('n') }).ok, true);
-  assert.equal(g.call('login', { no: a.no, username: a.username, hash: HASH('n') }).ok, true);
+  g.ctx.operatorReset();
+  assert.equal(g.mails.length, before, 'no email');
 });
 
 test('password change requires the current password', () => {
@@ -327,7 +395,7 @@ test('tables grow past the default sheet size of Google (26 columns, 1000 rows)'
 
 test('honeypot silently drops bots', () => {
   const g = load(); operator(g);
-  const r = g.call('public.apply', orgData({ hp: 'bot' }));
+  const r = apply(g, { hp: 'bot' });
   assert.equal(r.ok, true);
   assert.equal(r.id, 'ok');
 });

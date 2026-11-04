@@ -1,7 +1,7 @@
 /* Достъп до Google таблиците. Заглавията са на български, за да се четат таблиците и ръчно. */
 
 const SCHEMA = {
-  apps: ['Заявки за регистрация', { id: '№', at: 'Подадена', status: 'Статус', name: 'Организация', eik: 'ЕИК/БУЛСТАТ', type: 'Вид', email: 'Официален имейл', payload: 'Данни (JSON)', reason: 'Причина за отказ', decidedBy: 'Решил', decidedAt: 'Дата на решение', orgNo: 'Номер на организация' }],
+  apps: ['Заявки за регистрация', { id: '№', at: 'Подадена', status: 'Статус', name: 'Организация', eik: 'ЕИК/БУЛСТАТ', type: 'Вид', email: 'Официален имейл', payload: 'Данни (JSON)', reason: 'Причина за отказ', decidedBy: 'Решил', decidedAt: 'Дата на решение', orgNo: 'Номер на организация', salt: 'Сол', hash: 'Хеш' }],
   orgs: ['Организации', { no: 'Номер', name: 'Наименование', eik: 'ЕИК/БУЛСТАТ', type: 'Вид', status: 'Статус', sheetId: 'ID на таблицата', approvedAt: 'Одобрена', approvedBy: 'Одобрил', adminUser: 'Първи администратор' }],
   ops: ['Оператори', { username: 'Потребител', name: 'Име', email: 'Имейл', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден' }],
   log: ['Дневник', { at: 'Време', actor: 'Потребител', action: 'Действие', ref: 'Обект', details: 'Подробности' }],
@@ -23,6 +23,7 @@ const SCHEMA = {
   counters: ['Броячи', { key: 'Ключ', value: 'Стойност' }]
 };
 const ORG_TABLES = ['profile', 'users', 'cases', 'events', 'docs', 'art15', 'counters', 'log'];
+const HEADERS_CHECKED_ = {};
 
 const master_ = () => {
   const id = PropertiesService.getScriptProperties().getProperty('MASTER_ID');
@@ -42,7 +43,15 @@ function table_(ss, key) {
     s.setFrozenRows(1);
     // всичко като текст: датите и телефоните не се преобразуват автоматично
     s.getRange(1, 1, s.getMaxRows(), Math.max(head.length, 1)).setNumberFormat('@');
+  } else if (!HEADERS_CHECKED_[ss.getId() + key]) {
+    // новите колони се добавят в края на вече създадените таблици
+    const head = Object.values(def[1]), have = s.getLastColumn();
+    if (have < head.length) {
+      if (s.getMaxColumns() < head.length) s.insertColumnsAfter(s.getMaxColumns(), head.length - s.getMaxColumns());
+      s.getRange(1, have + 1, 1, head.length - have).setValues([head.slice(have)]);
+    }
   }
+  HEADERS_CHECKED_[ss.getId() + key] = true;
   return s;
 }
 

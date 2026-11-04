@@ -47,14 +47,21 @@ function applyPublic_(d) {
   if (hour >= CFG.APPLY_PER_HOUR) fail_('busy', 'Твърде много заявки. Опитайте по-късно.');
   const org = cleanOrg_(d), admin = cleanAdmin_(d);
   if (d.declare !== true) fail_('required', 'Необходимо е да потвърдите декларацията за представителна власт.');
+  // номерът се създава в браузъра, защото участва в изчисляването на хеша на паролата
+  const no = str_(d.no, 8), preHash = str_(d.hash, 64);
+  if (!NO_RE_.test(no) || no === CFG.OPERATOR_NO || no.charAt(0) === '0' || luhn_(no.slice(0, 7)) !== no.charAt(7)) fail_('value', 'Невалиден номер на организация.');
+  if (!PREHASH_RE_.test(preHash)) fail_('value', 'Задайте парола на администратора.');
   const m = master_();
   if (read_(m, 'orgs').some(x => x.eik === org.eik && x.status !== 'Закрита')) fail_('duplicate', 'Организация с този ЕИК/БУЛСТАТ вече е регистрирана.');
   if (read_(m, 'apps').some(x => x.eik === org.eik && x.status === 'Чака одобрение')) fail_('duplicate', 'За този ЕИК/БУЛСТАТ вече има подадена заявка, която чака одобрение.');
+  const taken = read_(m, 'orgs').some(x => x.no === no) || read_(m, 'apps').some(x => x.orgNo === no && x.status !== 'Отказана');
+  if (taken) fail_('retry', 'Номерът е зает. Опитайте отново.');
   cache.put('apply:h', String(hour + 1), 3600);
   const id = 'Р-' + todayIso_().slice(0, 4) + '-' + String(nextCounter_(m, 'apps')).padStart(4, '0');
+  const salt = randomToken_().slice(0, 32);
   insert_(m, 'apps', {
     id: id, at: stamp_(), status: 'Чака одобрение', name: org.name, eik: org.eik, type: org.type, email: org.email,
-    payload: JSON.stringify(Object.assign({}, org, admin))
+    payload: JSON.stringify(Object.assign({}, org, admin)), orgNo: no, salt: salt, hash: serverHash_(preHash, salt)
   });
   audit_(m, 'публично', 'Заявка за регистрация', id, org.name + ' (' + org.eik + ')');
   mail_(org.email, 'ЗДОИ4You Платформа – получена заявка ' + id,
@@ -78,15 +85,6 @@ function opOrgs_() {
 
 function opLog_() {
   return { log: read_(master_(), 'log').slice(-400).reverse().map(l => { delete l._row; return l; }) };
-}
-
-function newOrgNumber_(existing) {
-  for (let i = 0; i < 50; i++) {
-    const base = String(Math.floor(1000000 + Math.random() * 8999999));
-    const no = base + luhn_(base);
-    if (existing.indexOf(no) < 0) return no;
-  }
-  fail_('server', 'Не може да се генерира номер.');
 }
 
 function luhn_(s) {
@@ -114,7 +112,8 @@ function opDecide_(d, ctx) {
   const data = JSON.parse(app.payload);
   const orgs = read_(m, 'orgs');
   if (orgs.some(x => x.eik === data.eik && x.status !== 'Закрита')) fail_('duplicate', 'Организация с този ЕИК/БУЛСТАТ вече е регистрирана.');
-  const no = newOrgNumber_(orgs.map(x => x.no));
+  const no = app.orgNo;
+  if (orgs.some(x => x.no === no)) fail_('duplicate', 'Номерът на организацията вече се използва.');
 
   // отделна таблица за организацията
   const book = SpreadsheetApp.create('ЗДОИ4You – ' + no + ' – ' + data.name);
@@ -123,24 +122,22 @@ function opDecide_(d, ctx) {
   ORG_TABLES.forEach(k => table_(book, k));
   dropDefaultSheet_(book);
   Object.keys(ORG_FIELDS).forEach(k => insert_(book, 'profile', { key: k, value: data[k] }));
-  const inv = newInvite_(CFG.INVITE_DAYS * 24);
   insert_(book, 'users', {
     username: data.adminUsername, name: data.adminName, position: data.adminPosition, email: data.adminEmail, phone: data.adminPhone,
-    role: ROLE_ADMIN, active: 'Да', inviteHash: inv.hash, inviteExp: inv.exp, createdAt: stamp_(), createdBy: ctx.username
+    role: ROLE_ADMIN, active: 'Да', salt: app.salt, hash: app.hash, createdAt: stamp_(), createdBy: ctx.username
   });
   audit_(book, ctx.username, 'Организацията е одобрена', no, app.id);
 
   insert_(m, 'orgs', { no: no, name: data.name, eik: data.eik, type: data.type, status: 'Активна', sheetId: book.getId(), approvedAt: stamp_(), approvedBy: ctx.username, adminUser: data.adminUsername });
-  patch_(m, 'apps', app._row, { status: 'Одобрена', decidedBy: ctx.username, decidedAt: stamp_(), orgNo: no });
+  // хешът вече е в таблицата на организацията и не остава в главната
+  patch_(m, 'apps', app._row, { status: 'Одобрена', decidedBy: ctx.username, decidedAt: stamp_(), salt: '', hash: '' });
   audit_(m, ctx.username, 'Одобрена регистрация', app.id, no + ' ' + data.name);
 
-  const link = inviteLink_(no, data.adminUsername, inv.token);
-  const sent = mail_(data.adminEmail, 'ЗДОИ4You Платформа – организацията ви е одобрена',
-    'Организацията „' + data.name + '“ е одобрена.\n\nНомер на организацията: ' + no + '\nПотребител: ' + data.adminUsername +
-    '\n\nЗадайте паролата си тук (валидно ' + CFG.INVITE_DAYS + ' дни):\n' + link);
-  mail_(data.email, 'ЗДОИ4You Платформа – одобрена регистрация',
-    '„' + data.name + '“ е регистрирана с № ' + no + '. Определеният администратор е ' + data.adminName + ' (' + data.adminEmail + ').');
-  return { no: no, mailSent: sent, link: sent ? '' : link };
+  // само известие: без номер, потребител, парола или връзка
+  const notice = 'Заявката за регистрация на „' + data.name + '“ е одобрена.\n\n' +
+    'Влезте на ' + CFG.APP_URL + ' с номера на организацията, показан при подаването на заявката, и с избраните потребителско име и парола.';
+  [data.adminEmail, data.email].filter((x, i, all) => all.indexOf(x) === i).forEach(to => mail_(to, 'ЗДОИ4You Платформа – одобрена регистрация', notice));
+  return { no: no };
 }
 
 function opStatus_(d, ctx) {
@@ -162,10 +159,8 @@ function opInviteAdmin_(d, ctx) {
   const inv = newInvite_(CFG.INVITE_DAYS * 24);
   patch_(book, 'users', u._row, { inviteHash: inv.hash, inviteExp: inv.exp });
   audit_(book, ctx.username, 'Нова покана от оператор', u.username, '');
-  audit_(master_(), ctx.username, 'Нова покана за администратор', no, u.username);
-  const link = inviteLink_(no, u.username, inv.token);
-  const sent = mail_(u.email, 'ЗДОИ4You Платформа – нова парола', 'Номер: ' + no + '\nПотребител: ' + u.username + '\n\nЗадайте парола тук:\n' + link);
-  return { mailSent: sent, email: u.email, link: sent ? '' : link };
+  audit_(master_(), ctx.username, 'Нова връзка за администратор', no, u.username);
+  return { name: u.name, link: inviteLink_(no, u.username, inv.token) };
 }
 
 /* ---------- организация ---------- */
@@ -234,7 +229,7 @@ function usersSave_(d, ctx) {
   const inv = newInvite_(CFG.INVITE_DAYS * 24);
   insert_(ss, 'users', Object.assign({ username: username, inviteHash: inv.hash, inviteExp: inv.exp, createdAt: stamp_(), createdBy: ctx.username }, v));
   audit_(ss, ctx.username, 'Нов потребител', username, v.role);
-  return Object.assign({ created: true }, sendInvite_(ctx, username, v.email, inv.token));
+  return { created: true, link: inviteLink_(ctx.no, username, inv.token) };
 }
 
 function usersInvite_(d, ctx) {
@@ -242,16 +237,8 @@ function usersInvite_(d, ctx) {
   if (!u || u.active !== 'Да') fail_('notfound', 'Няма такъв активен потребител.');
   const inv = newInvite_(CFG.INVITE_DAYS * 24);
   patch_(ss, 'users', u._row, { inviteHash: inv.hash, inviteExp: inv.exp });
-  audit_(ss, ctx.username, 'Нова покана', u.username, '');
-  return sendInvite_(ctx, u.username, u.email, inv.token);
-}
-
-function sendInvite_(ctx, username, email, token) {
-  const link = inviteLink_(ctx.no, username, token);
-  const sent = mail_(email, 'ЗДОИ4You Платформа – достъп за „' + ctx.org.name + '“',
-    'Получавате достъп до платформата за „' + ctx.org.name + '“.\n\nНомер на организацията: ' + ctx.no + '\nПотребител: ' + username +
-    '\n\nЗадайте паролата си тук (валидно ' + CFG.INVITE_DAYS + ' дни):\n' + link);
-  return { mailSent: sent, link: sent ? '' : link };
+  audit_(ss, ctx.username, 'Нова връзка за парола', u.username, '');
+  return { link: inviteLink_(ctx.no, u.username, inv.token) };
 }
 
 function orgLog_(d, ctx) {

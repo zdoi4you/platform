@@ -30,7 +30,6 @@ function actions_() {
     'public.apply': { auth: 'public', write: true, fn: applyPublic_ },
     login: { auth: 'public', write: true, fn: login_ },
     activate: { auth: 'public', write: true, fn: activate_ },
-    forgot: { auth: 'public', write: true, fn: forgot_ },
 
     extend: { auth: 'any', fn: extend_ },
     logout: { auth: 'any', fn: logout_ },
@@ -148,6 +147,16 @@ function setup() {
   }
   console.log('Настройката вече е направена. Главна таблица: ' + master.getUrl());
   return master.getUrl();
+}
+
+/* забравена парола на оператор: изпълнява се от редактора, връзката се вижда само в журнала */
+function operatorReset() {
+  const m = master_(), op = read_(m, 'ops').find(x => x.username === 'admin');
+  if (!op) fail_('notfound', 'Няма такъв оператор.');
+  const invite = newInvite_(CFG.RESET_HOURS);
+  patch_(m, 'ops', op._row, { inviteHash: invite.hash, inviteExp: invite.exp });
+  audit_(m, 'редактор', 'Нова парола за оператор', 'admin', '');
+  console.log('Нова парола за оператора: ' + inviteLink_(CFG.OPERATOR_NO, 'admin', invite.token));
 }
 
 /* първият лист на нова таблица има различно име според езика на акаунта */

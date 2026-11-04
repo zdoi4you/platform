@@ -5,8 +5,10 @@
  * HMAC-SHA256(резултат + сол на потребителя) с таен ключ (PEPPER) в свойствата на скрипта. Така
  * хешовете в таблиците не могат да се проверяват офлайн без ключа, който не е в таблица.
  *
- * Първа парола и забравена парола минават през еднократна покана по имейл: сървърът никога не
- * създава и не знае парола.
+ * Организациите не получават данни за вход по имейл. Администраторът избира паролата си във формата
+ * за регистрация и вижда номера на организацията на екрана. Служител или забравена парола минават през
+ * еднократна връзка, показана на екрана на администратора и предадена лично. Сървърът не създава
+ * и не знае пароли.
  */
 
 const NO_RE_ = /^\d{8}$/, USER_RE_ = /^[a-z0-9._-]{3,40}$/, PREHASH_RE_ = /^[A-Za-z0-9+/=]{40,64}$/;
@@ -200,25 +202,4 @@ function activate_(d) {
   patch_(acc.ss, acc.key, u._row, { salt: salt, hash: serverHash_(preHash, salt), inviteHash: '', inviteExp: '' });
   audit_(acc.ss, username, 'Зададена парола чрез покана', '', '');
   return { no: no, username: username };
-}
-
-/* един и същи отговор независимо дали акаунтът съществува */
-function forgot_(d) {
-  const no = str_(d.no, 8), username = str_(d.username, 40).toLowerCase();
-  if (!NO_RE_.test(no) || !USER_RE_.test(username)) return {};
-  const cache = CacheService.getScriptCache(), key = 'fg:' + sha256_(no + '|' + username);
-  const n = Number(cache.get(key)) || 0;
-  if (n >= 3) return {};
-  cache.put(key, String(n + 1), 3600);
-  const acc = accountTable_(no);
-  const u = acc ? read_(acc.ss, acc.key).find(x => x.username === username) : null;
-  if (u && u.active === 'Да' && u.email) {
-    const inv = newInvite_(CFG.RESET_HOURS);
-    patch_(acc.ss, acc.key, u._row, { inviteHash: inv.hash, inviteExp: inv.exp });
-    audit_(acc.ss, username, 'Поискана нова парола', '', '');
-    mail_(u.email, 'ЗДОИ4You Платформа – нова парола',
-      'Поискана е нова парола за потребител ' + username + '.\n\nЗадайте я тук (валидно ' + CFG.RESET_HOURS + ' часа):\n' +
-      inviteLink_(no, username, inv.token) + '\n\nАко не сте го поискали, не правете нищо. Старата парола продължава да работи.');
-  }
-  return {};
 }

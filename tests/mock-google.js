@@ -27,6 +27,7 @@ class Sheet {
   constructor(name) { this.name = name; this.cells = []; this.maxRows = 1000; this.maxCols = 26; }
   getName() { return this.name; }
   getLastRow() { return this.cells.length; }
+  getLastColumn() { return (this.cells[0] || []).length; }
   getMaxRows() { return this.maxRows; }
   getMaxColumns() { return this.maxCols; }
   insertRowsAfter(after, n) { this.maxRows += n; }
@@ -100,7 +101,7 @@ function load() {
   })();`, ctx);
   const dir = path.join(__dirname, '..', 'apps-script');
   const src = fs.readdirSync(dir).filter(f => f.endsWith('.gs')).sort().map(f => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
-  vm.runInContext(src + '\nthis.__t = { term_, validEik_, safeCell_, readCell_, luhn_, holidays_, DOC_TYPES, REFUSAL };', ctx, { filename: 'apps-script.js' });
+  vm.runInContext(src + '\nthis.resetHeaders = () => { Object.keys(HEADERS_CHECKED_).forEach(k => delete HEADERS_CHECKED_[k]); };\nthis.__t = { term_, validEik_, safeCell_, readCell_, luhn_, holidays_, DOC_TYPES, REFUSAL };', ctx, { filename: 'apps-script.js' });
   return {
     ctx, books, mails, props,
     setup: () => ctx.setup(),
