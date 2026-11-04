@@ -109,6 +109,12 @@ test('a re-use decision cites the appeal provision for re-use', () => {
   assert.ok(kind('Достъп до обществена информация').includes('чл. 40, ал. 1'));
 });
 
+test('the list of rights is the same in the browser and on the server', () => {
+  const g = load();
+  assert.deepEqual([...g.ctx.__perms.all], Docs.PERMS.map(p => p[0]));
+  assert.deepEqual([...g.ctx.__perms.staff], Docs.STAFF_PERMS);
+});
+
 test('motives appear in decisions and letters, split into paragraphs, before the operative part', () => {
   for (const type of ['grant', 'partial', 'refuse']) {
     const t = text(Object.assign(payload({ motives: 'Първи мотив.\n\nВтори мотив.' }), { type }));

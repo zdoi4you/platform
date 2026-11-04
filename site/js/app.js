@@ -269,6 +269,7 @@ async function api(action, data) {
   } catch (e) { throw new Error('Няма връзка със сървъра. Проверете интернет връзката и опитайте отново.'); }
   if (res.ok) return res;
   if (res.error === 'session' && session) { endSession(res.message); throw new Error(res.message); }
+  if (res.error === 'mustchange' && session) { session.me.mustChange = true; saveSession(); location.hash = '#/me'; }
   throw Object.assign(new Error(res.message || 'Възникна грешка.'), { code: res.error });
 }
 
@@ -396,6 +397,8 @@ async function downloadPdf(payload) {
   window.pdfMake.createPdf(window.Docs.pdfDefinition(payload, logo)).download(window.Docs.fileName(payload));
 }
 
+const can = p => !!(session && session.me.perms && session.me.perms[p]);
+
 /* ---------- обща рамка ---------- */
 
 function themePicker() {
@@ -418,8 +421,9 @@ function shell() {
   const me = session.me;
   const tabs = me.operator
     ? [['#/op/apps', 'Заявки за регистрация'], ['#/op/changes', 'Заявки за промяна'], ['#/op/orgs', 'Организации'], ['#/op/log', 'Дневник'], ['#/me', 'Моят профил']]
-    : [['#/', 'Табло'], ['#/cases', 'Преписки'], ['#/docs', 'Документи'], ['#/reports', 'Отчети'], ['#/art15', 'Чл. 15'], ['#/org', 'Организация']]
-      .concat(me.role === 'Администратор' ? [['#/users', 'Потребители'], ['#/log', 'Дневник']] : []).concat([['#/me', 'Моят профил']]);
+    : [['#/', 'Табло'], ['#/cases', 'Преписки'], ['#/docs', 'Документи']]
+      .concat(can('reports') ? [['#/reports', 'Отчети']] : [], [['#/art15', 'Чл. 15'], ['#/org', 'Организация']])
+      .concat(me.role === 'Администратор' ? [['#/users', 'Потребители']] : [], can('log') ? [['#/log', 'Дневник']] : [], [['#/me', 'Моят профил']]);
   const nav = h('nav', { class: 'tabs', 'aria-label': 'Основно меню' }, tabs.map(([href, label]) => h('a', { href }, label)));
   $app().replaceChildren(
     h('header', { class: 'top' }, h('div', { class: 'bar' },
@@ -444,7 +448,11 @@ function markTab() {
 }
 const Store = { boot: null };
 async function boot() {
-  if (!Store.boot) Store.boot = await api('org.bootstrap');
+  if (!Store.boot) {
+    Store.boot = await api('org.bootstrap');
+    session.me.perms = Store.boot.me.perms; // правата може да са променени след входа
+    saveSession();
+  }
   return Store.boot;
 }
 
@@ -572,12 +580,12 @@ async function viewDash() {
   const tile = (n, label, cls, href) => h('a', { class: 'card tile ' + (cls || ''), href }, h('b', null, n), h('span', { class: 'muted small' }, label));
   setView(
     h('div', { class: 'head' }, h('div', null, h('h1', null, b.profile.name), h('p', { class: 'muted small' }, `Номер на организацията: ${b.me.no}`)),
-      h('a', { class: 'btn primary', href: '#/new' }, '+ Нова преписка')),
+      can('casesEdit') ? h('a', { class: 'btn primary', href: '#/new' }, '+ Нова преписка') : null),
     h('div', { class: 'tiles' },
       tile(open.length, 'Активни преписки', '', '#/cases'),
       tile(late.length, 'С изтекъл срок', late.length ? 'bad' : '', '#/cases'),
       tile(soon.length, 'Изтичат до 3 дни', soon.length ? 'warn' : '', '#/cases'),
-      tile(rows.filter(c => c.regDate.startsWith(year)).length, `Заявления през ${year} г.`, '', '#/reports')),
+      tile(rows.filter(c => c.regDate.startsWith(year)).length, `Заявления през ${year} г.`, '', can('reports') ? '#/reports' : '#/cases')),
     h('div', { class: 'card' }, h('h2', null, 'Най-близки срокове'), h('div', { class: 'small muted' }, 'Срокът, който изтича в неработен ден, се мести на следващия работен.'), h('br'),
       caseTable(open.slice().sort((a, c) => a.daysLeft - c.daysLeft).slice(0, 10))));
 }
@@ -594,7 +602,7 @@ async function viewCases() {
   };
   [q, st, yr].forEach(el => el.addEventListener('input', draw));
   draw();
-  setView(h('div', { class: 'head' }, h('h1', null, 'Преписки по ЗДОИ'), h('a', { class: 'btn primary', href: '#/new' }, '+ Нова преписка')),
+  setView(h('div', { class: 'head' }, h('h1', null, 'Преписки по ЗДОИ'), can('casesEdit') ? h('a', { class: 'btn primary', href: '#/new' }, '+ Нова преписка') : null),
     h('div', { class: 'card' }, h('div', { class: 'filters' }, q, st, yr), box));
 }
 
@@ -677,7 +685,11 @@ async function viewCase(regNo) {
       thirdRow('Отговор на третото лице (ал. 1)', c.thirdReplyBy, c.thirdGot ? `получен на ${fmt(c.thirdGot)}` : null, c.thirdReplyDays),
       !Number(c.ext31) ? h('p', { class: 'small muted' }, 'Срокът за отговор е смятан с максималните 14 дни, защото още няма удължаване по чл. 31.') : null) : null);
 
-  const types = Object.entries(DEFS).filter(([k]) => k !== 'report' && k !== 'art15');
+  if (!can('casesEdit')) {
+    form.querySelectorAll('fieldset').forEach(f => { f.disabled = true; });
+    form.querySelector('button[type=submit]').remove();
+  }
+  const types = Object.entries(DEFS).filter(([k, d]) => k !== 'report' && k !== 'art15' && can(d.decision ? 'decisions' : 'letters'));
   const groups = [...new Set(types.map(([, d]) => d.group))];
   const pick = h('select', { 'aria-label': 'Вид документ' }, h('option', { value: '' }, 'Изберете документ…'),
     groups.map(g => h('optgroup', { label: g }, types.filter(([, d]) => d.group === g).map(([k, d]) => h('option', { value: k }, d.title)))));
@@ -688,11 +700,11 @@ async function viewCase(regNo) {
 
   const note = h('form', null, h('label', { class: 'field' }, h('span', null, 'Вътрешен коментар'), h('textarea', { name: 'text', rows: 2, required: true, maxlength: 2000 })), h('button', { class: 'btn sm block', type: 'submit' }, 'Добави'));
   submitter(note, async d => { await api('case.comment', { regNo: c.regNo, text: d.text }); viewCase(c.regNo).catch(showError); });
-  const hist = h('div', { class: 'card stack' }, h('h2', null, 'История'), note,
+  const hist = h('div', { class: 'card stack' }, h('h2', null, 'История'), can('casesEdit') ? note : null,
     h('ul', { class: 'timeline' }, r.events.map(e => h('li', null, h('div', { class: 'small muted' }, `${fmtTime(e.at)} · ${e.user} · ${e.kind}`), h('div', { class: 'pre' }, e.text)))));
 
   setView(h('div', { class: 'head' }, h('div', null, h('p', { class: 'small' }, h('a', { href: '#/cases' }, '← Всички преписки')), h('h1', null, `Преписка ${c.regNo}`), h('p', { class: 'muted' }, c.applicantName)), statusPill(c.status)),
-    h('div', { class: 'split' }, form, h('div', { class: 'stack' }, dueCard, docCard, docsCard, hist)));
+    h('div', { class: 'split' }, form, h('div', { class: 'stack' }, dueCard, types.length ? docCard : null, docsCard, hist)));
 }
 
 function docList(rows) {
@@ -863,13 +875,14 @@ async function viewArt15() {
     ? 'Списъкът е по чл. 15, ал. 1.'
     : b.profile.basis === 'чл. 3, ал. 2, т. 1' ? 'За лицата по чл. 3, ал. 2, т. 1 важат точките по чл. 15, ал. 3.'
       : 'Чл. 15 не задава изрично това задължение за лицата по чл. 3, ал. 2, т. 2. Показаните точки (по ал. 3) могат да се ползват доброволно.';
-  setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Информация по чл. 15 ЗДОИ'), h('p', { class: 'muted small' }, `Попълнени: ${done} от ${list.length}. ${basisNote} Публикува се на интернет страницата в срок до 3 работни дни от приемането на акта или създаването на информацията (чл. 15а, ал. 4).`)), gen),
+  setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Информация по чл. 15 ЗДОИ'), h('p', { class: 'muted small' }, `Попълнени: ${done} от ${list.length}. ${basisNote} Публикува се на интернет страницата в срок до 3 работни дни от приемането на акта или създаването на информацията (чл. 15а, ал. 4).`)), can('art15') ? gen : null),
     h('div', { class: 'stack' }, list.map(([n, label]) => {
       const cur = map[String(n)] || {};
       const stamp = h('span', { class: 'small muted' }, cur.updated ? `Обновено на ${fmt(cur.updated)}` : 'Не е попълнено');
       const form = h('form', { class: 'card' }, h('h3', null, `т. ${n}. ${label}`), h('br'),
         h('div', { class: 'form-grid' }, fieldEl({ k: 'text', label: 'Описание', type: 'textarea', rows: 3 }, cur.text), fieldEl({ k: 'url', label: 'Интернет адрес', type: 'url', placeholder: 'https://', full: true }, cur.url)),
-        h('br'), h('div', { class: 'actions' }, h('button', { class: 'btn sm', type: 'submit' }, 'Запази'), stamp));
+        h('br'), h('div', { class: 'actions' }, can('art15') ? h('button', { class: 'btn sm', type: 'submit' }, 'Запази') : null, stamp));
+      if (!can('art15')) form.querySelectorAll('input,textarea').forEach(el => { el.disabled = true; });
       return submitter(form, async d => {
         const r = await api('art15.save', { item: String(n), text: d.text, url: d.url });
         stamp.textContent = `Обновено на ${fmt(r.updated)}`;
@@ -894,9 +907,9 @@ const changeStatus = s => h('span', { class: 'pill ' + (s === 'Одобрена'
 async function viewOrg() {
   Store.boot = null;
   const [b, { changes }] = await Promise.all([boot(), api('org.changes')]);
-  const admin = b.me.role === 'Администратор', pending = changes.find(c => c.status === 'Чака одобрение');
+  const pending = changes.find(c => c.status === 'Чака одобрение');
   const missing = ORG_SECTIONS.flatMap(s => s[1]).concat(SEAT_FIELDS).filter(f => !b.profile[f.k]);
-  const canAsk = admin && !pending;
+  const canAsk = can('changes') && !pending;
   const form = h('form', { class: 'card' },
     ORG_SECTIONS.map(([title, fields]) => h('fieldset', { disabled: !canAsk }, h('legend', null, title), h('div', { class: 'form-grid' },
       fields.map(f => fieldEl(f, b.profile[f.k], b.profile))))),
@@ -905,7 +918,7 @@ async function viewOrg() {
         h('p', { class: 'note' }, 'Данните не се променят директно. Променете полетата по-горе, посочете основанието и изпратете заявка. Промяната влиза в сила след одобрение от екипа на ЗДОИ4You.'), h('br'),
         fieldEl({ k: 'changeBasis', label: 'Основание за промяната', type: 'textarea', req: true, rows: 3, hint: 'Например: решение на общинския съвет, заповед, вписване в регистър, с номер и дата.' })),
       h('button', { class: 'btn primary', type: 'submit' }, 'Изпрати заявка за промяна')
-    ] : h('p', { class: 'muted small' }, pending ? 'Данните не могат да се променят, докато заявката чака решение.' : 'Заявка за промяна може да изпрати администраторът на организацията.'));
+    ] : h('p', { class: 'muted small' }, pending ? 'Данните не могат да се променят, докато заявката чака решение.' : 'Нямате право да изпращате заявки за промяна на данните.'));
   if (canAsk) {
     submitter(form, async d => {
       const r = await api('org.changeRequest', d);
@@ -921,8 +934,8 @@ async function viewOrg() {
   setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Данни на организацията'), h('p', { class: 'muted small' }, 'Номер на организацията: ', h('b', { class: 'mono' }, b.me.no), '. Служителите го въвеждат при вход.'))),
     missing.length ? [h('p', { class: 'warnbox' }, 'Има непопълнени данни. Документи не могат да се генерират, докато не са попълнени всички.'), h('br')] : null,
     pending ? [h('p', { class: 'warnbox' }, 'Заявка ' + pending.id + ' чака решение от екипа на ЗДОИ4You.'), h('br')] : null,
-    h('div', { class: 'stack' }, form, history, signersCard(b.signers, admin, d => api('signers.save', d), () => { Store.boot = null; viewOrg().catch(showError); }),
-      groundsCard(b.grounds, admin, d => api('grounds.save', d), () => { Store.boot = null; viewOrg().catch(showError); })));
+    h('div', { class: 'stack' }, form, history, signersCard(b.signers, can('signers'), d => api('signers.save', d), () => { Store.boot = null; viewOrg().catch(showError); }),
+      groundsCard(b.grounds, can('grounds'), d => api('grounds.save', d), () => { Store.boot = null; viewOrg().catch(showError); })));
 }
 
 /* оператор: заявки за промяна на данни */
@@ -1026,6 +1039,9 @@ function showLink(res, name) {
 
 function userDialog(u, save, done) {
   const isNew = !u;
+  const permBoxes = h('div', { class: 'addr full field' }, h('div', { class: 'addr-title' }, 'Права'),
+    h('p', { class: 'small muted' }, 'Смяната на ролята връща правата по подразбиране за нея. Управлението на потребители е само за роля Администратор.'),
+    h('div', { class: 'stack ground-list' }, Docs.PERMS.map(([k, label, hint]) => h('label', { class: 'check' }, h('input', { type: 'checkbox', 'data-perm': k }), h('span', null, label, hint ? h('small', { class: 'muted' }, ' ' + hint) : null)))));
   const form = h('form', null, h('h2', null, isNew ? 'Нов потребител' : `Потребител ${u.username}`), h('div', { class: 'form-grid' },
     fieldEl({ k: 'username', label: 'Потребителско име', req: true, readonly: !isNew, pattern: '[a-z0-9._\\-]{3,40}', hint: 'Малки латински букви, цифри и . _ -' }, u && u.username),
     fieldEl({ k: 'name', label: 'Имена', req: true }, u && u.name),
@@ -1034,11 +1050,17 @@ function userDialog(u, save, done) {
     fieldEl({ k: 'phone', label: 'Телефон', type: 'tel' }, u && u.phone),
     fieldEl({ k: 'role', label: 'Роля', type: 'select', options: ['Служител', 'Администратор'], req: true }, u ? u.role : 'Служител'),
     isNew ? null : fieldEl({ k: 'active', label: 'Активен', type: 'select', options: ['Да', 'Не'], req: true }, u.active)),
+  permBoxes,
   h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Отказ'), h('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Създай потребител' : 'Запази')));
+  const roleEl = form.querySelector('[name=role]');
+  const setPerms = list => permBoxes.querySelectorAll('input[data-perm]').forEach(i => { i.checked = list.includes(i.dataset.perm); });
+  setPerms(u ? u.perms : Docs.defaultPerms(roleEl.value));
+  roleEl.addEventListener('change', () => setPerms(Docs.defaultPerms(roleEl.value)));
   const dlg = h('dialog', null, form);
   dlg.addEventListener('close', () => dlg.remove());
   submitter(form, async d => {
-    const r = await save(Object.assign(d, { isNew, active: isNew ? true : d.active === 'Да' }));
+    const perms = [...permBoxes.querySelectorAll('input[data-perm]:checked')].map(i => i.dataset.perm);
+    const r = await save(Object.assign(d, { isNew, perms, active: isNew ? true : d.active === 'Да' }));
     dlg.close();
     if (r.created) showLink(r, d.name); else toast('Записано.');
     done();
@@ -1051,11 +1073,12 @@ async function viewUsers() {
   const edit = u => userDialog(u, d => api('users.save', d), () => { Store.boot = null; viewUsers().catch(showError); });
   setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Потребители'), h('p', { class: 'muted small' }, 'Всеки потребител получава от вас лично еднократна връзка и сам задава паролата си. Данни за вход не се изпращат по имейл.')), h('button', { class: 'btn primary', onclick: () => edit(null) }, '+ Нов потребител')),
     h('div', { class: 'card table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null, ['Потребител', 'Имена', 'Длъжност', 'Имейл', 'Роля', 'Състояние', 'Последен вход', ''].map(t => h('th', null, t)))),
+      h('thead', null, h('tr', null, ['Потребител', 'Имена', 'Длъжност', 'Имейл', 'Роля', 'Права', 'Състояние', 'Последен вход', ''].map(t => h('th', null, t)))),
       h('tbody', null, users.map(u => {
         const invite = h('button', { class: 'btn sm' }, 'Нова парола');
         invite.addEventListener('click', () => withBusy(invite, async () => showLink(await api('users.invite', { username: u.username }), u.name)));
         return h('tr', null, h('td', { class: 'mono' }, u.username), h('td', null, u.name), h('td', null, u.position), h('td', null, u.email), h('td', null, u.role),
+          h('td', { class: 'small' }, u.perms.length === Docs.defaultPerms(u.role).length && Docs.defaultPerms(u.role).every(k => u.perms.includes(k)) ? 'по подразбиране' : Docs.PERMS.filter(p => u.perms.includes(p[0])).map(p => p[1]).join('; ') || 'без права'),
           h('td', null, u.active !== 'Да' ? h('span', { class: 'pill bad' }, 'Спрян') : u.pending ? h('span', { class: 'pill warn' }, 'Чака парола') : h('span', { class: 'pill ok' }, 'Активен')),
           h('td', { class: 'mono small' }, fmtTime(u.lastLogin)),
           h('td', { class: 'right' }, h('div', { class: 'actions' }, h('button', { class: 'btn sm', onclick: () => edit(u) }, 'Промени'), invite)));
@@ -1169,7 +1192,7 @@ async function viewOpOrg(no) {
   const users = h('div', { class: 'card table-wrap' },
     h('div', { class: 'head' }, h('h2', null, 'Потребители'), h('button', { class: 'btn sm', onclick: () => userDialog(null, d => api('op.user.save', Object.assign(d, { no })), reload) }, '+ Нов потребител')),
     h('table', null,
-      h('thead', null, h('tr', null, ['Потребител', 'Имена', 'Роля', 'Състояние', 'Последен вход', ''].map(t => h('th', null, t)))),
+      h('thead', null, h('tr', null, ['Потребител', 'Имена', 'Роля', 'Права', 'Състояние', 'Последен вход', ''].map(t => h('th', null, t)))),
       h('tbody', null, r.users.map(u => {
         const gen = h('button', { class: 'btn sm' }, 'Генерирай парола');
         gen.addEventListener('click', () => withBusy(gen, async () => {
@@ -1178,6 +1201,7 @@ async function viewOpOrg(no) {
           credentialsDialog(no, u.username, password, reload);
         }));
         return h('tr', null, h('td', { class: 'mono' }, u.username), h('td', null, u.name), h('td', null, u.role),
+          h('td', { class: 'small' }, u.perms.length === Docs.defaultPerms(u.role).length && Docs.defaultPerms(u.role).every(k => u.perms.includes(k)) ? 'по подразбиране' : Docs.PERMS.filter(p => u.perms.includes(p[0])).map(p => p[1]).join('; ') || 'без права'),
           h('td', null, u.active !== 'Да' ? h('span', { class: 'pill bad' }, 'Спрян') : u.mustChange === 'Да' ? h('span', { class: 'pill warn' }, 'Да смени паролата') : u.pending ? h('span', { class: 'pill warn' }, 'Чака парола') : h('span', { class: 'pill ok' }, 'Активен')),
           h('td', { class: 'mono small' }, fmtTime(u.lastLogin)),
           h('td', { class: 'right' }, h('div', { class: 'actions' }, h('button', { class: 'btn sm', onclick: () => userDialog(u, d => api('op.user.save', Object.assign(d, { no })), reload) }, 'Промени'), gen)));

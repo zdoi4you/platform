@@ -101,7 +101,7 @@ function load() {
   })();`, ctx);
   const dir = path.join(__dirname, '..', 'apps-script');
   const src = fs.readdirSync(dir).filter(f => f.endsWith('.gs')).sort().map(f => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
-  vm.runInContext(src + '\nthis.resetHeaders = () => { Object.keys(HEADERS_CHECKED_).forEach(k => delete HEADERS_CHECKED_[k]); };\nthis.__t = { term_, validEik_, safeCell_, readCell_, luhn_, holidays_, DOC_TYPES, REFUSAL, GROUNDS };', ctx, { filename: 'apps-script.js' });
+  vm.runInContext(src + '\nthis.resetHeaders = () => { Object.keys(HEADERS_CHECKED_).forEach(k => delete HEADERS_CHECKED_[k]); };\nthis.__perms = { all: PERMS, staff: STAFF_PERMS };\nthis.__t = { term_, validEik_, safeCell_, readCell_, luhn_, holidays_, DOC_TYPES, REFUSAL, GROUNDS };', ctx, { filename: 'apps-script.js' });
   return {
     ctx, books, mails, props,
     setup: () => ctx.setup(),

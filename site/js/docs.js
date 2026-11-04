@@ -449,7 +449,22 @@
 
   const fileName = p => `${p.no}.pdf`.replace(/[^\p{L}\p{N}._-]+/gu, '_');
 
-  const api = { orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, GROUNDS, GROUND_SCOPE_LABELS, groundsText, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
+  const PERMS = [
+    ['casesAll', 'Вижда всички преписки', 'Без това право вижда само възложените на него и въведените от него.'],
+    ['casesEdit', 'Създава и променя преписки, пише коментари', ''],
+    ['letters', 'Издава писма и протоколи', ''],
+    ['decisions', 'Издава решения', ''],
+    ['reports', 'Годишни отчети', ''],
+    ['art15', 'Информация по чл. 15', 'Промяна и генериране на PDF.'],
+    ['signers', 'Управлява упълномощените лица', ''],
+    ['grounds', 'Управлява собствените правни основания', ''],
+    ['changes', 'Изпраща заявки за промяна на данните на организацията', ''],
+    ['log', 'Вижда дневника', '']
+  ];
+  const STAFF_PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports', 'art15'];
+  const defaultPerms = role => (role === 'Администратор' ? PERMS.map(p => p[0]) : STAFF_PERMS);
+
+  const api = { PERMS, STAFF_PERMS, defaultPerms, orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, GROUNDS, GROUND_SCOPE_LABELS, groundsText, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Docs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

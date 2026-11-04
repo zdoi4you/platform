@@ -662,6 +662,95 @@ test('organizations add their own grounds; separate per organization and per kin
   assert.equal(g.call('grounds.save', { scope: 'refuse', text: 'x' }, staff).error, 'role');
 });
 
+/* служител с дадени права; връща токена му */
+function staffWith(g, adminToken, no, username, perms) {
+  const r = g.call('users.save', Object.assign({ isNew: true, username, name: 'С', position: 'Е', email: username + '@example.org', role: 'Служител' }, perms ? { perms } : {}), adminToken);
+  assert.equal(r.created, true, JSON.stringify(r));
+  const e = parts(r.link);
+  g.call('activate', { no: e[1], username: e[2], token: e[3], hash: HASH('e') });
+  return g.call('login', { no, username, hash: HASH('e') });
+}
+
+test('rights: defaults by role keep the usual behaviour', () => {
+  const { g, a } = setupTwo();
+  const me = g.call('org.bootstrap', {}, a.token).me;
+  assert.equal(Object.keys(me.perms).length, 10, 'administrator has all rights');
+  const s = staffWith(g, a.token, a.no, 'emp1');
+  assert.deepEqual(Object.keys(s.me.perms).sort(), ['art15', 'casesAll', 'casesEdit', 'decisions', 'letters', 'reports']);
+  assert.equal(g.call('users.list', {}, a.token).users.find(u => u.username === 'emp1').perms.length, 6);
+});
+
+test('rights: each one is enforced on the server, whatever the browser shows', () => {
+  const { g, a } = setupTwo();
+  const reg = g.call('case.create', caseData({ regDate: '2026-11-02' }), a.token).regNo;
+  const s = staffWith(g, a.token, a.no, 'emp1', ['casesAll']).token;
+  assert.equal(g.call('case.get', { regNo: reg }, s).ok, true, 'can read');
+  assert.equal(g.call('case.create', caseData(), s).error, 'role');
+  assert.equal(g.call('case.update', Object.assign(g.call('case.get', { regNo: reg }, s).case, { status: 'Приключена' }), s).error, 'role');
+  assert.equal(g.call('case.comment', { regNo: reg, text: 'x' }, s).error, 'role');
+  assert.equal(g.call('doc.create', { type: 'noinfo', regNo: reg, title: 'x', fields: {} }, s).error, 'role');
+  assert.equal(g.call('doc.create', { type: 'refuse', regNo: reg, title: 'x', fields: { groundKey: 't3', factual: 'ф' } }, s).error, 'role');
+  assert.equal(g.call('doc.create', { type: 'report', title: 'x', fields: { year: '2026' } }, s).error, 'role');
+  assert.equal(g.call('doc.create', { type: 'art15', title: 'x', fields: {} }, s).error, 'role');
+  assert.equal(g.call('report.stats', { year: '2026' }, s).error, 'role');
+  assert.equal(g.call('art15.save', { item: '4', text: 'x' }, s).error, 'role');
+  assert.equal(g.call('log.list', {}, s).error, 'role');
+  assert.equal(g.call('signers.save', { name: 'x', position: 'y', act: 'z' }, s).error, 'role');
+  assert.equal(g.call('grounds.save', { scope: 'refuse', text: 'x' }, s).error, 'role');
+  assert.equal(g.call('org.changeRequest', {}, s).error, 'role');
+  const letters = staffWith(g, a.token, a.no, 'emp2', ['casesAll', 'letters']).token;
+  assert.equal(g.call('doc.create', { type: 'noinfo', regNo: reg, title: 'x', fields: {} }, letters).ok, true, 'letters only');
+  assert.equal(g.call('doc.create', { type: 'refuse', regNo: reg, title: 'x', fields: { groundKey: 't3', factual: 'ф' } }, letters).error, 'role', 'no decisions');
+});
+
+test('rights: without "all cases" a user sees only assigned and own cases, and their documents', () => {
+  const { g, a } = setupTwo();
+  const s = staffWith(g, a.token, a.no, 'emp1', ['casesEdit', 'letters', 'decisions']).token;
+  const hidden = g.call('case.create', caseData({ subject: 'СКРИТА' }), a.token).regNo;
+  const assigned = g.call('case.create', caseData({ owner: 'emp1', subject: 'ВЪЗЛОЖЕНА' }), a.token).regNo;
+  const own = g.call('case.create', caseData({ subject: 'МОЯ' }), s).regNo;
+  const seen = g.call('case.list', {}, s).cases.map(c => c.regNo).sort();
+  assert.deepEqual(seen, [assigned, own].sort());
+  assert.equal(g.call('case.get', { regNo: hidden }, s).error, 'notfound');
+  assert.equal(g.call('case.comment', { regNo: hidden, text: 'x' }, s).error, 'notfound');
+  assert.equal(g.call('doc.create', { type: 'noinfo', regNo: hidden, title: 'x', fields: {} }, s).error, 'notfound');
+  const secret = g.call('doc.create', { type: 'noinfo', regNo: hidden, title: 'x', fields: {} }, a.token);
+  assert.equal(g.call('doc.get', { id: secret.id }, s).error, 'notfound');
+  assert.ok(!JSON.stringify(g.call('doc.list', {}, s)).includes(secret.id));
+  const report = g.call('doc.create', { type: 'report', title: 'x', fields: { year: '2026' } }, a.token);
+  assert.equal(g.call('doc.get', { id: report.id }, s).error, 'notfound', 'report without the right');
+});
+
+test('rights: changes apply immediately; users stay administrator-only; the role resets them', () => {
+  const { g, op, a } = setupTwo();
+  const s = staffWith(g, a.token, a.no, 'emp1');
+  const base = { username: 'emp1', name: 'С', position: 'Е', email: 'emp1@example.org', role: 'Служител' };
+  assert.equal(g.call('report.stats', { year: '2026' }, s.token).ok, true);
+  assert.equal(g.call('users.save', Object.assign({}, base, { perms: ['casesAll', 'нещо'] }), a.token).error, 'value');
+  assert.equal(g.call('users.save', Object.assign({}, base, { perms: ['casesAll'] }), a.token).ok, true);
+  assert.equal(g.call('report.stats', { year: '2026' }, s.token).error, 'role', 'taken away at once');
+  assert.equal(g.call('users.list', {}, s.token).error, 'role');
+  assert.equal(g.call('users.save', Object.assign({}, base, { perms: ['log'] }), a.token).ok, true);
+  assert.equal(g.call('log.list', {}, s.token).ok, true, 'staff can receive a usually administrator right');
+  assert.equal(g.call('users.list', {}, s.token).error, 'role', 'but never user management');
+  assert.equal(g.call('users.save', Object.assign({}, base, { role: 'Администратор' }), a.token).ok, true);
+  assert.equal(g.call('users.list', {}, a.token).users.find(u => u.username === 'emp1').perms.length, 10, 'role change resets to defaults');
+  assert.equal(g.call('op.user.save', { no: a.no, username: 'emp1', name: 'С', position: 'Е', email: 'emp1@example.org', role: 'Служител', perms: ['art15'] }, op).ok, true);
+  assert.deepEqual(g.call('op.org.get', { no: a.no }, op).users.find(u => u.username === 'emp1').perms, ['art15'], 'operator can set rights too');
+  const raw = JSON.stringify(g.call('users.list', {}, a.token));
+  assert.ok(!/"(salt|hash|inviteHash)"/.test(raw));
+});
+
+test('rights: an administrator without the right cannot use it, but still manages users', () => {
+  const { g, a } = setupTwo();
+  const r = g.call('users.save', { isNew: true, username: 'adm2', name: 'В', position: 'Ю', email: 'a2@example.org', role: 'Администратор', perms: ['casesAll'] }, a.token);
+  const e = parts(r.link);
+  g.call('activate', { no: e[1], username: e[2], token: e[3], hash: HASH('e') });
+  const t = g.call('login', { no: a.no, username: 'adm2', hash: HASH('e') }).token;
+  assert.equal(g.call('log.list', {}, t).error, 'role');
+  assert.equal(g.call('users.list', {}, t).ok, true);
+});
+
 test('third-party deadlines are calculated (art. 31)', () => {
   const { g, a } = setupTwo();
   const reg = g.call('case.create', caseData({ regDate: '2026-11-02' }), a.token).regNo;

@@ -63,9 +63,18 @@ function withDue_(c, today) {
   return o;
 }
 
+/* без право „всички преписки“ потребителят вижда само възложените на него и въведените от него */
+const canSee_ = (c, ctx) => !!ctx.perms.casesAll || c.owner === ctx.username || c.createdBy === ctx.username;
+
+function visibleCase_(ss, regNo, ctx) {
+  const c = findCase_(ss, regNo);
+  if (!canSee_(c, ctx)) fail_('notfound', 'Преписката не е намерена.');
+  return c;
+}
+
 function caseList_(d, ctx) {
   const today = todayIso_();
-  const rows = read_(ctx.ss(), 'cases').map(c => {
+  const rows = read_(ctx.ss(), 'cases').filter(c => canSee_(c, ctx)).map(c => {
     const o = withDue_(c, today);
     ['applicantAddress', 'applicantPhone', 'appealNote'].forEach(k => delete o[k]);
     return o;
@@ -80,7 +89,7 @@ function findCase_(ss, regNo) {
 }
 
 function caseGet_(d, ctx) {
-  const ss = ctx.ss(), c = findCase_(ss, d.regNo);
+  const ss = ctx.ss(), c = visibleCase_(ss, d.regNo, ctx);
   return {
     case: withDue_(c, todayIso_()),
     events: read_(ss, 'events').filter(e => e.regNo === c.regNo).map(e => { delete e._row; return e; }).reverse(),
@@ -119,7 +128,7 @@ function caseCreate_(d, ctx) {
 }
 
 function caseUpdate_(d, ctx) {
-  const ss = ctx.ss(), c = findCase_(ss, d.regNo), v = caseFields_(d);
+  const ss = ctx.ss(), c = visibleCase_(ss, d.regNo, ctx), v = caseFields_(d);
   Object.assign(v, {
     status: oneOf_(d.status, CASE_STATUS, 'Статус'), outcome: oneOf_(d.outcome || '', CASE_OUTCOME, 'Резултат'),
     clarifyAsked: isoDate_(d.clarifyAsked), clarifyGot: isoDate_(d.clarifyGot), thirdAsked: isoDate_(d.thirdAsked), thirdGot: isoDate_(d.thirdGot),
@@ -149,7 +158,7 @@ function limitDays_(v, max, label) {
 }
 
 function caseComment_(d, ctx) {
-  const ss = ctx.ss(), c = findCase_(ss, d.regNo), text = str_(d.text, 2000);
+  const ss = ctx.ss(), c = visibleCase_(ss, d.regNo, ctx), text = str_(d.text, 2000);
   if (!text) fail_('required', 'Напишете текст.');
   event_(ss, c.regNo, ctx.username, 'Коментар', text);
   return {};
@@ -217,12 +226,14 @@ function docCreate_(d, ctx) {
   const ss = ctx.ss(), type = str_(d.type, 20);
   if (!Object.prototype.hasOwnProperty.call(DOC_TYPES, type)) fail_('value', 'Непознат вид документ.');
   const def = DOC_TYPES[type], org = profile_(ss);
+  const needPerm = type === 'report' ? 'reports' : type === 'art15' ? 'art15' : def.decision ? 'decisions' : 'letters';
+  if (!ctx.perms[needPerm]) fail_('role', 'Нямате право да издавате този вид документ.');
   const missing = Object.keys(ORG_FIELDS).filter(k => !org[k]);
   if (missing.length) fail_('profile', 'Попълнете всички данни на организацията, преди да генерирате документи.');
   const raw = d.fields && typeof d.fields === 'object' ? d.fields : {};
   const f = {};
   Object.keys(raw).slice(0, 40).forEach(k => { f[str_(k, 40)] = str_(raw[k], k === 'edits' ? 40000 : 8000); });
-  const c = def.noCase ? null : findCase_(ss, d.regNo);
+  const c = def.noCase ? null : visibleCase_(ss, d.regNo, ctx);
   if (def.decision) {
     if (!f.court && c && oblastOfCase_(c)) f.court = courtForOblast_(oblastOfCase_(c));
     if (f.court && OBLASTS_.map(courtForOblast_).indexOf(f.court) < 0) fail_('court', 'Изберете административен съд от списъка.');
@@ -277,13 +288,22 @@ function docCreate_(d, ctx) {
   return { id: id, no: no, payload: payload };
 }
 
+/* документ без преписка се вижда с правото за него, а останалите с правото да се вижда преписката */
+function docVisible_(doc, ctx, cases) {
+  if (!doc.regNo) return !!ctx.perms[doc.type === 'report' ? 'reports' : 'art15'];
+  if (ctx.perms.casesAll) return true;
+  const c = cases.find(x => x.regNo === doc.regNo);
+  return !!c && canSee_(c, ctx);
+}
+
 function docList_(d, ctx) {
-  return { docs: publicRows_(read_(ctx.ss(), 'docs')).reverse() };
+  const ss = ctx.ss(), cases = read_(ss, 'cases');
+  return { docs: publicRows_(read_(ss, 'docs').filter(x => docVisible_(x, ctx, cases))).reverse() };
 }
 
 function docGet_(d, ctx) {
-  const r = read_(ctx.ss(), 'docs').find(x => x.id === str_(d.id, 16));
-  if (!r) fail_('notfound', 'Документът не е намерен.');
+  const ss = ctx.ss(), r = read_(ss, 'docs').find(x => x.id === str_(d.id, 16));
+  if (!r || !docVisible_(r, ctx, read_(ss, 'cases'))) fail_('notfound', 'Документът не е намерен.');
   try {
     return { payload: JSON.parse(r.payload) };
   } catch (_) {

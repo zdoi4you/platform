@@ -173,7 +173,7 @@ function regOrg_(raw) {
 const opActor_ = ctx => 'оператор ' + ctx.username;
 
 function usersPublic_(ss) {
-  return publicRows_(read_(ss, 'users')).map(u => { const o = Object.assign({}, u); o.pending = !!u.inviteExp; delete o.inviteExp; return o; });
+  return publicRows_(read_(ss, 'users')).map(u => { const o = Object.assign({}, u); o.pending = !!u.inviteExp; delete o.inviteExp; o.perms = Object.keys(permsOf_(u)); return o; });
 }
 
 function opOrgGet_(d, ctx) {
@@ -384,7 +384,7 @@ function orgBootstrap_(d, ctx) {
   const me = read_(ss, 'users').find(u => u.username === ctx.username);
   return {
     profile: profile_(ss), users: users, signers: signersOf_(ss), grounds: groundsOf_(ss),
-    me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false }
+    me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false, perms: permsOf_(me) }
   };
 }
 
@@ -403,12 +403,19 @@ function usersSave_(d, ctx) {
   if (!v.name || !v.position || !v.email) fail_('required', 'Попълнете име, длъжност и имейл.');
   if (!isEmail_(v.email)) fail_('email', 'Невалиден имейл.');
   const cur = users.find(u => u.username === username);
+  if (d.perms !== undefined) {
+    if (!Array.isArray(d.perms) || d.perms.some(k => PERMS.indexOf(k) < 0)) fail_('value', 'Невалидни права.');
+    // записва се само ако се различава от правата по подразбиране за ролята
+    const base = v.role === ROLE_ADMIN ? PERMS : STAFF_PERMS;
+    const same = d.perms.length === base.length && base.every(k => d.perms.indexOf(k) >= 0);
+    v.perms = same ? '' : JSON.stringify(d.perms);
+  } else if (cur && cur.role !== v.role) v.perms = '';
   if (cur) {
     const stillAdmin = users.some(u => u.username !== username && u.role === ROLE_ADMIN && u.active === 'Да') || (v.role === ROLE_ADMIN && v.active === 'Да');
     if (!stillAdmin) fail_('lastadmin', 'Организацията трябва да има поне един активен администратор.');
     patch_(ss, 'users', cur._row, v);
     dropUserCache_(ctx.no, username);
-    audit_(ss, ctx.username, 'Промяна на потребител', username, v.role + ', активен: ' + v.active);
+    audit_(ss, ctx.username, 'Промяна на потребител', username, v.role + ', активен: ' + v.active + (v.perms !== undefined ? ', права: ' + (v.perms || 'по подразбиране') : ''));
     return { created: false };
   }
   if (d.isNew !== true) fail_('notfound', 'Потребителят не е намерен.');

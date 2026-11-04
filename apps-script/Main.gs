@@ -23,6 +23,9 @@ const CFG = {
 };
 
 const ROLE_ADMIN = 'Администратор', ROLE_STAFF = 'Служител', ROLE_OP = 'Оператор';
+/* права на потребителите; управлението на потребители е само за роля Администратор и не се отнема */
+const PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports', 'art15', 'signers', 'grounds', 'changes', 'log'];
+const STAFF_PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports', 'art15'];
 
 /* auth: public | user (всеки потребител на организация) | admin (администратор на организация) | op (оператор) | any */
 function actions_() {
@@ -36,27 +39,27 @@ function actions_() {
     password: { auth: 'any', write: true, fn: changePassword_ },
 
     'org.bootstrap': { auth: 'user', fn: orgBootstrap_ },
-    'org.changeRequest': { auth: 'admin', write: true, fn: orgChangeRequest_ },
+    'org.changeRequest': { auth: 'user', perm: 'changes', write: true, fn: orgChangeRequest_ },
     'org.changes': { auth: 'user', fn: orgChanges_ },
-    'signers.save': { auth: 'admin', write: true, fn: signersSave_ },
-    'grounds.save': { auth: 'admin', write: true, fn: groundsSave_ },
+    'signers.save': { auth: 'user', perm: 'signers', write: true, fn: signersSave_ },
+    'grounds.save': { auth: 'user', perm: 'grounds', write: true, fn: groundsSave_ },
     'users.list': { auth: 'admin', fn: usersList_ },
     'users.save': { auth: 'admin', write: true, fn: usersSave_ },
     'users.invite': { auth: 'admin', write: true, fn: usersInvite_ },
-    'log.list': { auth: 'admin', fn: orgLog_ },
+    'log.list': { auth: 'user', perm: 'log', fn: orgLog_ },
 
     'case.list': { auth: 'user', fn: caseList_ },
     'case.get': { auth: 'user', fn: caseGet_ },
-    'case.create': { auth: 'user', write: true, fn: caseCreate_ },
-    'case.update': { auth: 'user', write: true, fn: caseUpdate_ },
-    'case.comment': { auth: 'user', write: true, fn: caseComment_ },
+    'case.create': { auth: 'user', perm: 'casesEdit', write: true, fn: caseCreate_ },
+    'case.update': { auth: 'user', perm: 'casesEdit', write: true, fn: caseUpdate_ },
+    'case.comment': { auth: 'user', perm: 'casesEdit', write: true, fn: caseComment_ },
 
     'doc.create': { auth: 'user', write: true, fn: docCreate_ },
     'doc.list': { auth: 'user', fn: docList_ },
     'doc.get': { auth: 'user', fn: docGet_ },
-    'report.stats': { auth: 'user', fn: reportStats_ },
+    'report.stats': { auth: 'user', perm: 'reports', fn: reportStats_ },
     'art15.get': { auth: 'user', fn: art15Get_ },
-    'art15.save': { auth: 'user', write: true, fn: art15Save_ },
+    'art15.save': { auth: 'user', perm: 'art15', write: true, fn: art15Save_ },
 
     'op.apps': { auth: 'op', fn: opApps_ },
     'op.decide': { auth: 'op', write: true, fn: opDecide_ },
@@ -105,6 +108,7 @@ function dispatch_(req) {
     const ctx = a.auth === 'public' ? null : auth_(req.token, a.auth);
     // парола, генерирана от оператор, се сменя преди всичко останало
     if (ctx && ctx.session.mc && ['password', 'logout', 'extend'].indexOf(name) < 0) fail_('mustchange', 'Сменете паролата, за да продължите.');
+    if (a.perm && !ctx.perms[a.perm]) fail_('role', 'Нямате право за това действие.');
     const run = () => a.fn(data, ctx);
     return Object.assign({ ok: true, now: Date.now() }, a.write ? locked_(run) : run());
   } catch (err) {

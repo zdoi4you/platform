@@ -104,7 +104,7 @@ function login_(d) {
   const mc = u.mustChange === 'Да';
   saveSession_(token, { no: no, u: username, exp: exp, mc: mc });
   const role = acc.org ? u.role : ROLE_OP;
-  return { token: token, session: exp, me: Object.assign(meInfo_(no, acc.org, u, role), { mustChange: mc }) };
+  return { token: token, session: exp, me: Object.assign(meInfo_(no, acc.org, u, role), { mustChange: mc, perms: acc.org ? permsOf_(u) : {} }) };
 }
 
 function meInfo_(no, org, u, role) {
@@ -146,9 +146,20 @@ function auth_(token, need) {
   const me = cachedUser_(s.no, s.u, ctx.user);
   if (!me || me.active !== 'Да') fail_('session', 'Достъпът е спрян.');
   ctx.role = me.role;
+  ctx.perms = me.perms || {};
   ctx.name = me.name;
   if (need === 'admin' && me.role !== ROLE_ADMIN) fail_('role', 'Това действие е само за администратор.');
   return ctx;
+}
+
+/* правата на потребител: по подразбиране според ролята, освен ако администраторът ги е настроил */
+function permsOf_(u) {
+  let list = null;
+  if (u.perms) { try { list = JSON.parse(u.perms); } catch (_) { list = null; } }
+  if (!Array.isArray(list)) list = u.role === ROLE_ADMIN ? PERMS : (u.role === ROLE_STAFF ? STAFF_PERMS : []);
+  const out = {};
+  list.forEach(k => { if (PERMS.indexOf(k) >= 0) out[k] = true; });
+  return out;
 }
 
 function cachedUser_(no, username, load) {
@@ -156,7 +167,7 @@ function cachedUser_(no, username, load) {
   if (hit) return JSON.parse(hit);
   const u = load();
   if (!u) return null;
-  const small = { active: u.active, role: u.role || ROLE_OP, name: u.name };
+  const small = { active: u.active, role: u.role || ROLE_OP, name: u.name, perms: permsOf_(u) };
   cache.put(key, JSON.stringify(small), 300);
   return small;
 }
