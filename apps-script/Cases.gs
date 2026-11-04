@@ -7,10 +7,34 @@ const CASE_CHANNEL = ['Писмено', 'По имейл (чл. 15, ал. 1, т.
 const APPLICANT_TYPE = ['Гражданин', 'Юридическо лице', 'Журналист или медия', 'Неправителствена организация'];
 const CASE_OUTCOME = ['', 'Предоставен достъп', 'Частичен достъп', 'Отказ', 'Препратено (чл. 32)', 'Няма информация (чл. 33)', 'Без разглеждане', 'Отказ на заявителя (чл. 36)'];
 const REFUSAL = {
-  t1: 'чл. 37, ал. 1, т. 1 ЗДОИ – класифицирана информация или друга защитена тайна, или случаите по чл. 13, ал. 2',
-  t2: 'чл. 37, ал. 1, т. 2 ЗДОИ – засягат се интересите на трето лице, което изрично е отказало предоставянето',
-  t3: 'чл. 37, ал. 1, т. 3 ЗДОИ – информацията е предоставена на заявителя през предходните 6 месеца'
+    t1: 'чл. 37, ал. 1, т. 1 ЗДОИ – класифицирана информация или друга защитена тайна, или случаите по чл. 13, ал. 2',
+    t1a: 'чл. 37, ал. 1, т. 1 във връзка с чл. 13, ал. 2, т. 1 ЗДОИ – служебна информация, свързана с оперативната подготовка на актовете, без самостоятелно значение',
+    t1b: 'чл. 37, ал. 1, т. 1 във връзка с чл. 13, ал. 2, т. 2 ЗДОИ – мнения и позиции във връзка с настоящи или предстоящи преговори',
+    t1c: 'чл. 37, ал. 1, т. 1 във връзка с чл. 17, ал. 2 ЗДОИ – търговска тайна, чието предоставяне би довело до нелоялна конкуренция',
+    t2: 'чл. 37, ал. 1, т. 2 ЗДОИ – засягат се интересите на трето лице, което изрично е отказало предоставянето',
+    t3: 'чл. 37, ал. 1, т. 3 ЗДОИ – информацията е предоставена на заявителя през предходните 6 месеца',
+    p1: 'чл. 2, ал. 1 ЗДОИ – исканата информация не е обществена информация по смисъла на закона',
+    p5: 'чл. 2, ал. 5 ЗДОИ – законът не се прилага за достъпа до лични данни',
+    r1: 'чл. 41б, ал. 1, т. 1 ЗДОИ – повторно използване: съдържанието е свързано с дейност извън правомощията и функциите на организацията',
+    r2: 'чл. 41б, ал. 1, т. 2 ЗДОИ – повторно използване: информация на публичноправна организация с търговска дейност, създадена извън обхвата на обществените услуги',
+    r3: 'чл. 41б, ал. 1, т. 3 ЗДОИ – повторно използване: обект на право на интелектуална собственост на трето лице',
+    r4: 'чл. 41б, ал. 1, т. 4 ЗДОИ – повторно използване: събрана или създадена от обществени радио- и телевизионни оператори',
+    r5: 'чл. 41а, ал. 2 ЗДОИ – повторно използване: изисква създаване или адаптиране или непропорционално много усилия'
 };
+const GRANT_GROUNDS = {
+    g1: 'чл. 31, ал. 3 ЗДОИ – при спазване на условията, при които третото лице е дало съгласие',
+    g2: 'чл. 31, ал. 4 ЗДОИ – при изрично несъгласие достъпът е в обем и по начин, които не разкриват информацията, засягаща третото лице',
+    g3: 'чл. 31, ал. 5 ЗДОИ – третото лице е задължен субект и отнасящата се до него информация е обществена',
+    g4: 'чл. 31, ал. 5 ЗДОИ – надделяващ обществен интерес от разкриването на информацията',
+    g5: 'чл. 13, ал. 3 ЗДОИ – изтекли са 2 години от създаването на служебната информация',
+    g6: 'чл. 13, ал. 4 ЗДОИ – надделяващ обществен интерес при служебна обществена информация',
+    g7: 'чл. 17, ал. 2 ЗДОИ – надделяващ обществен интерес при търговска тайна'
+};
+const DISMISS_GROUNDS = {
+    d1: 'чл. 25, ал. 2 ЗДОИ – заявлението не съдържа данните по чл. 25, ал. 1, т. 1, 2 и 4',
+    d2: 'чл. 29, ал. 2 ЗДОИ – предметът на исканата информация не е уточнен до 30 дни'
+};
+const GROUNDS = { refuse: REFUSAL, grant: GRANT_GROUNDS, dismiss: DISMISS_GROUNDS, letter: {} };
 
 /* дължими срокове; изчисляват се само тук, за да има един източник */
 function withDue_(c, today) {
@@ -137,17 +161,17 @@ const event_ = (ss, regNo, user, kind, text) => insert_(ss, 'events', { at: stam
 
 /* cls: брояч; need: задължителни полета; apply: промяна на преписката */
 const DOC_TYPES = {
-  clarify: { cls: 'ИЗХ', need: ['what'], apply: (c, f, p) => ({ status: 'Чака уточняване', clarifyAsked: p.date }) },
-  extend30: { cls: 'ИЗХ', need: ['days', 'reason'], apply: (c, f) => ({ ext30: limitDays_(f.days, 10, 'чл. 30') }) },
-  extend31: { cls: 'ИЗХ', need: ['days', 'third'], apply: (c, f) => ({ ext31: limitDays_(f.days, 14, 'чл. 31'), status: 'Чака трето лице' }) },
-  thirdparty: { cls: 'ИЗХ', need: ['third', 'thirdAddress', 'info', 'by'], apply: (c, f, p) => ({ thirdAsked: p.date, status: 'Чака трето лице' }) },
-  forward: { cls: 'ИЗХ', need: ['body', 'bodyAddress'], apply: () => ({ outcome: 'Препратено (чл. 32)', status: 'Приключена' }) },
-  noinfo: { cls: 'ИЗХ', need: [], apply: () => ({ outcome: 'Няма информация (чл. 33)', status: 'Приключена' }) },
-  dismiss: { cls: 'ИЗХ', need: ['ground'], apply: () => ({ outcome: 'Без разглеждане', status: 'Приключена' }) },
-  letter: { cls: 'ИЗХ', need: ['subjectLine', 'text'], apply: () => ({}) },
-  grant: { cls: 'РЕШ', decision: true, need: ['scope', 'court', 'accessDays', 'place', 'accessForm', 'costs'], apply: () => ({ outcome: 'Предоставен достъп', status: 'Решение издадено' }) },
-  partial: { cls: 'РЕШ', decision: true, need: ['scope', 'withheld', 'groundKey', 'factual', 'court', 'accessDays', 'place', 'accessForm', 'costs'], apply: () => ({ outcome: 'Частичен достъп', status: 'Решение издадено' }) },
-  refuse: { cls: 'РЕШ', decision: true, need: ['groundKey', 'factual', 'court'], apply: () => ({ outcome: 'Отказ', status: 'Решение издадено' }) },
+  clarify: { cls: 'ИЗХ', groundScope: 'letter', need: ['what'], apply: (c, f, p) => ({ status: 'Чака уточняване', clarifyAsked: p.date }) },
+  extend30: { cls: 'ИЗХ', groundScope: 'letter', need: ['days', 'reason'], apply: (c, f) => ({ ext30: limitDays_(f.days, 10, 'чл. 30') }) },
+  extend31: { cls: 'ИЗХ', groundScope: 'letter', need: ['days', 'third'], apply: (c, f) => ({ ext31: limitDays_(f.days, 14, 'чл. 31'), status: 'Чака трето лице' }) },
+  thirdparty: { cls: 'ИЗХ', groundScope: 'letter', need: ['third', 'thirdAddress', 'info', 'by'], apply: (c, f, p) => ({ thirdAsked: p.date, status: 'Чака трето лице' }) },
+  forward: { cls: 'ИЗХ', groundScope: 'letter', need: ['body', 'bodyAddress'], apply: () => ({ outcome: 'Препратено (чл. 32)', status: 'Приключена' }) },
+  noinfo: { cls: 'ИЗХ', groundScope: 'letter', need: [], apply: () => ({ outcome: 'Няма информация (чл. 33)', status: 'Приключена' }) },
+  dismiss: { cls: 'ИЗХ', groundScope: 'dismiss', groundNeeded: true, need: [], apply: () => ({ outcome: 'Без разглеждане', status: 'Приключена' }) },
+  letter: { cls: 'ИЗХ', groundScope: 'letter', need: ['subjectLine', 'text'], apply: () => ({}) },
+  grant: { cls: 'РЕШ', decision: true, groundScope: 'grant', need: ['scope', 'court', 'accessDays', 'place', 'accessForm', 'costs'], apply: () => ({ outcome: 'Предоставен достъп', status: 'Решение издадено' }) },
+  partial: { cls: 'РЕШ', decision: true, groundScope: 'refuse', groundNeeded: true, need: ['scope', 'withheld', 'factual', 'court', 'accessDays', 'place', 'accessForm', 'costs'], apply: () => ({ outcome: 'Частичен достъп', status: 'Решение издадено' }) },
+  refuse: { cls: 'РЕШ', decision: true, groundScope: 'refuse', groundNeeded: true, need: ['factual', 'court'], apply: () => ({ outcome: 'Отказ', status: 'Решение издадено' }) },
   protocol: { cls: 'ПРТ', need: ['given', 'accessForm', 'employee'], apply: () => ({ status: 'Приключена' }) },
   report: { cls: 'ОТЧ', noCase: true, need: ['year'], apply: null },
   art15: { cls: 'ЧЛ15', noCase: true, need: [], apply: null }
@@ -167,6 +191,26 @@ function oblastOfCase_(c) {
   const fromAddress = m ? m[1].trim() : '';
   if (OBLASTS_.indexOf(fromAddress) >= 0) return fromAddress;
   return OBLASTS_.indexOf(c.applicantOblast) >= 0 ? c.applicantOblast : '';
+}
+
+/* избраните основания: от закона, от списъка на организацията и написано за конкретния документ */
+function resolveGrounds_(ss, scope, f) {
+  let keys = [];
+  if (f.groundKeys) {
+    try { keys = JSON.parse(f.groundKeys); } catch (_) { fail_('value', 'Невалидни правни основания.'); }
+    if (!Array.isArray(keys)) fail_('value', 'Невалидни правни основания.');
+  } else if (f.groundKey) keys = [f.groundKey];
+  const own = read_(ss, 'grounds');
+  const texts = keys.map(k => {
+    const key = String(k);
+    if (Object.prototype.hasOwnProperty.call(GROUNDS[scope], key)) return GROUNDS[scope][key];
+    const g = own.find(x => x.id === key && x.scope === scope && x.active === 'Да');
+    if (!g) fail_('value', 'Невалидно правно основание.');
+    return g.text;
+  });
+  const other = line_(f.groundOther, 1000);
+  if (other) { texts.push(other); keys = keys.concat('other'); }
+  return { keys: keys.map(String), text: texts.join('; ') };
 }
 
 function docCreate_(d, ctx) {
@@ -191,10 +235,12 @@ function docCreate_(d, ctx) {
   if (f.accessDays !== undefined && f.accessDays !== '' && (!/^\d+$/.test(f.accessDays) || Number(f.accessDays) < 30)) {
     fail_('accessDays', 'Срокът за достъп не може да е по-кратък от 30 дни от получаване на решението (чл. 34, ал. 4).');
   }
-  if (f.groundKey) {
-    if (!REFUSAL[f.groundKey]) fail_('value', 'Невалидно основание за отказ.');
-    f.groundText = REFUSAL[f.groundKey];
-  }
+  delete f.groundText;
+  delete f.ground;
+  const chosen = def.groundScope ? resolveGrounds_(ss, def.groundScope, f) : { keys: [], text: '' };
+  if (def.groundNeeded && !chosen.text) fail_('ground', 'Изберете или напишете поне едно правно основание.');
+  if (chosen.text) f.groundText = chosen.text;
+  if (type === 'dismiss') f.ground = chosen.text;
   const date = isoDate_(d.date) || todayIso_();
   const year = date.slice(0, 4);
   if (f.signerId) {
@@ -222,7 +268,7 @@ function docCreate_(d, ctx) {
   });
   if (c) {
     const patch = def.apply(c, f, payload);
-    if (def.decision) { patch.decisionNo = no; patch.decisionDate = date; if (f.groundKey) patch.refusalGround = f.groundKey; }
+    if (def.decision) { patch.decisionNo = no; patch.decisionDate = date; if (def.groundNeeded && chosen.keys.length) patch.refusalGround = chosen.keys.join(','); }
     patch.updatedAt = stamp_();
     patch_(ss, 'cases', c._row, patch);
     event_(ss, c.regNo, ctx.username, 'Документ', (line_(d.title, 200) || type) + ' № ' + no);
@@ -262,7 +308,15 @@ function stats_(ss, yearRaw) {
   const refused = rows.filter(c => c.outcome === 'Отказ' || c.outcome === 'Частичен достъп');
   const grounds = {};
   Object.keys(REFUSAL).forEach(k => { grounds[REFUSAL[k]] = 0; });
-  refused.forEach(c => { const g = REFUSAL[c.refusalGround] || 'Не е посочено'; grounds[g] = (grounds[g] || 0) + 1; });
+  const own = read_(ss, 'grounds');
+  refused.forEach(c => {
+    const list = String(c.refusalGround || '').split(',').filter(Boolean);
+    (list.length ? list : ['']).forEach(k => {
+      const mine = own.find(x => x.id === k);
+      const g = REFUSAL[k] || (mine && mine.text) || (k === 'other' ? 'Друго основание' : 'Не е посочено');
+      grounds[g] = (grounds[g] || 0) + 1;
+    });
+  });
   const today = todayIso_();
   const late = rows.filter(c => {
     if (c.decisionDate) {

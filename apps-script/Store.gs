@@ -23,9 +23,10 @@ const SCHEMA = {
   docs: ['Документи', { id: 'ID', no: 'Номер', type: 'Вид', title: 'Заглавие', regNo: 'Рег. №', date: 'Дата', at: 'Създаден', author: 'Автор', payload: 'Данни (JSON)' }],
   art15: ['Чл. 15', { item: 'Точка', text: 'Описание', url: 'Интернет адрес', updated: 'Обновено на', by: 'Обновил' }],
   counters: ['Броячи', { key: 'Ключ', value: 'Стойност' }],
+  grounds: ['Правни основания', { id: 'ID', scope: 'Вид акт', text: 'Основание', active: 'Активно', by: 'Въвел', at: 'Въведено' }],
   signers: ['Упълномощени лица', { id: 'ID', name: 'Име', position: 'Длъжност', act: 'Акт за определяне', from: 'В сила от', to: 'В сила до', active: 'Активно', by: 'Въвел', at: 'Въведено' }]
 };
-const ORG_TABLES = ['profile', 'users', 'cases', 'events', 'docs', 'art15', 'counters', 'signers', 'log'];
+const ORG_TABLES = ['profile', 'users', 'cases', 'events', 'docs', 'art15', 'counters', 'signers', 'grounds', 'log'];
 const HEADERS_CHECKED_ = {};
 
 const master_ = () => {

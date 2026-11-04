@@ -613,6 +613,55 @@ test('the court is not organization data, even if an older profile still stores 
   assert.equal(doc.payload.f.court, 'Административен съд – Варна');
 });
 
+test('several legal grounds in one decision, including free text', () => {
+  const { g, a } = setupTwo();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const refuse = fields => g.call('doc.create', { type: 'refuse', regNo: reg, title: 'x', date: '2026-06-01', fields: Object.assign({ factual: 'факти' }, fields) }, a.token);
+  assert.equal(refuse({}).error, 'ground', 'a refusal needs a ground');
+  assert.equal(refuse({ groundKeys: '[]' }).error, 'ground');
+  assert.equal(refuse({ groundKeys: '["zz"]' }).error, 'value');
+  assert.equal(refuse({ groundKeys: 'повреден' }).error, 'value');
+  assert.equal(refuse({ groundKeys: '["g1"]' }).error, 'value', 'a ground for another kind of act');
+  const r = refuse({ groundKeys: '["t2","t1c"]', groundOther: 'чл. 8 от Закон за пример', groundText: 'подправено' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.payload.f.groundText.includes('чл. 37, ал. 1, т. 2') && r.payload.f.groundText.includes('чл. 17, ал. 2') && r.payload.f.groundText.includes('чл. 8 от Закон за пример'));
+  assert.ok(!r.payload.f.groundText.includes('подправено'), 'text comes from the list, not the browser');
+  assert.equal(g.call('case.get', { regNo: reg }, a.token).case.refusalGround, 't2,t1c,other');
+  assert.equal(refuse({ groundOther: 'само свободен текст' }).ok, true);
+  const d = g.call('doc.create', { type: 'dismiss', regNo: reg, title: 'x', date: '2026-06-01', fields: { groundKeys: '["d2"]' } }, a.token);
+  assert.ok(d.payload.f.ground.startsWith('чл. 29, ал. 2'));
+  assert.equal(g.call('doc.create', { type: 'dismiss', regNo: reg, title: 'x', fields: {} }, a.token).error, 'ground');
+  const grant = g.call('doc.create', { type: 'grant', regNo: reg, title: 'x', date: '2026-06-01', fields: { scope: 'пълен', accessDays: '30', place: 'м', accessForm: 'ф', costs: '0' } }, a.token);
+  assert.equal(grant.ok, true, 'extra grounds are optional when granting access');
+});
+
+test('organizations add their own grounds; separate per organization and per kind of act', () => {
+  const { g, op, a, b } = setupTwo();
+  assert.equal(g.call('grounds.save', { scope: 'refuse', text: '' }, a.token).error, 'required');
+  assert.equal(g.call('grounds.save', { scope: 'нещо', text: 'x' }, a.token).error, 'value');
+  const id = g.call('grounds.save', { scope: 'refuse', text: 'чл. 9 от Закон за пример' }, a.token).id;
+  assert.ok(id);
+  assert.equal(g.call('org.bootstrap', {}, a.token).grounds.length, 1);
+  assert.equal(g.call('org.bootstrap', {}, b.token).grounds.length, 0);
+  const reg = g.call('case.create', caseData({ regDate: '2025-02-03' }), a.token).regNo;
+  const use = (token, r, keys) => g.call('doc.create', { type: 'refuse', regNo: r, title: 'x', date: '2025-02-10', fields: { factual: 'факти', groundKeys: JSON.stringify(keys) } }, token);
+  assert.equal(use(a.token, reg, [id]).payload.f.groundText, 'чл. 9 от Закон за пример');
+  const stats = g.call('report.stats', { year: '2025' }, a.token).stats;
+  assert.equal(stats.grounds['чл. 9 от Закон за пример'], 1, 'counted in the annual report');
+  const regB = g.call('case.create', caseData(), b.token).regNo;
+  assert.equal(use(b.token, regB, [id]).error, 'value', 'not usable by another organization');
+  assert.equal(g.call('doc.create', { type: 'grant', regNo: reg, title: 'x', fields: { scope: 'п', accessDays: '30', place: 'м', accessForm: 'ф', costs: '0', groundKeys: JSON.stringify([id]) } }, a.token).error, 'value', 'wrong kind of act');
+  g.call('grounds.save', { id, scope: 'refuse', text: 'чл. 9 от Закон за пример', active: false }, a.token);
+  assert.equal(use(a.token, reg, [id]).error, 'value', 'deactivated');
+  assert.equal(g.call('op.ground.save', { no: b.no, scope: 'grant', text: 'от оператор' }, op).ok, true);
+  assert.equal(g.call('op.org.get', { no: b.no }, op).grounds.length, 1);
+  assert.equal(g.call('op.ground.save', { no: b.no, scope: 'grant', text: 'x' }, a.token).error, 'role');
+  const e = addStaff(g, a.token);
+  g.call('activate', { no: e[1], username: e[2], token: e[3], hash: HASH('e') });
+  const staff = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
+  assert.equal(g.call('grounds.save', { scope: 'refuse', text: 'x' }, staff).error, 'role');
+});
+
 test('third-party deadlines are calculated (art. 31)', () => {
   const { g, a } = setupTwo();
   const reg = g.call('case.create', caseData({ regDate: '2026-11-02' }), a.token).regNo;

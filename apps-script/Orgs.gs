@@ -178,7 +178,39 @@ function usersPublic_(ss) {
 
 function opOrgGet_(d, ctx) {
   const org = regOrg_(d.no), book = orgSheet_(org);
-  return { no: org.no, status: org.status, profile: profile_(book), users: usersPublic_(book), signers: signersOf_(book) };
+  return { no: org.no, status: org.status, profile: profile_(book), users: usersPublic_(book), signers: signersOf_(book), grounds: groundsOf_(book) };
+}
+
+/* ---------- собствени правни основания на организацията ---------- */
+
+const GROUND_SCOPES = ['refuse', 'grant', 'dismiss', 'letter'];
+const groundsOf_ = ss => read_(ss, 'grounds').map(s => { const x = Object.assign({}, s); delete x._row; return x; });
+
+function saveGround_(ss, d, actor) {
+  const v = { scope: oneOf_(d.scope, GROUND_SCOPES, 'Вид акт'), text: line_(d.text, 500), active: d.active === false ? 'Не' : 'Да' };
+  if (!v.text) fail_('required', 'Напишете правното основание.');
+  const id = str_(d.id, 16);
+  if (id) {
+    const cur = read_(ss, 'grounds').find(s => s.id === id);
+    if (!cur) fail_('notfound', 'Основанието не е намерено.');
+    patch_(ss, 'grounds', cur._row, v);
+    audit_(ss, actor, 'Променено правно основание', v.scope, v.text);
+    return { id: id };
+  }
+  const newId = 'c' + randomToken_().slice(0, 15);
+  insert_(ss, 'grounds', Object.assign({ id: newId, by: actor, at: stamp_() }, v));
+  audit_(ss, actor, 'Добавено правно основание', v.scope, v.text);
+  return { id: newId };
+}
+
+function groundsSave_(d, ctx) {
+  return saveGround_(ctx.ss(), d, ctx.username);
+}
+
+function opGroundSave_(d, ctx) {
+  const reg = regOrg_(d.no), r = saveGround_(orgSheet_(reg), d, opActor_(ctx));
+  audit_(master_(), ctx.username, 'Правно основание в организация', reg.no, line_(d.text, 200));
+  return r;
 }
 
 /* ---------- лица, определени да издават решения (чл. 28, ал. 2 ЗДОИ) ---------- */
@@ -351,7 +383,7 @@ function orgBootstrap_(d, ctx) {
   const users = read_(ss, 'users').filter(u => u.active === 'Да').map(u => ({ username: u.username, name: u.name }));
   const me = read_(ss, 'users').find(u => u.username === ctx.username);
   return {
-    profile: profile_(ss), users: users, signers: signersOf_(ss),
+    profile: profile_(ss), users: users, signers: signersOf_(ss), grounds: groundsOf_(ss),
     me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false }
   };
 }

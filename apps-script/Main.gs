@@ -39,6 +39,7 @@ function actions_() {
     'org.changeRequest': { auth: 'admin', write: true, fn: orgChangeRequest_ },
     'org.changes': { auth: 'user', fn: orgChanges_ },
     'signers.save': { auth: 'admin', write: true, fn: signersSave_ },
+    'grounds.save': { auth: 'admin', write: true, fn: groundsSave_ },
     'users.list': { auth: 'admin', fn: usersList_ },
     'users.save': { auth: 'admin', write: true, fn: usersSave_ },
     'users.invite': { auth: 'admin', write: true, fn: usersInvite_ },
@@ -67,6 +68,7 @@ function actions_() {
     'op.org.create': { auth: 'op', write: true, fn: opOrgCreate_ },
     'op.org.save': { auth: 'op', write: true, fn: opOrgSave_ },
     'op.signer.save': { auth: 'op', write: true, fn: opSignerSave_ },
+    'op.ground.save': { auth: 'op', write: true, fn: opGroundSave_ },
     'op.user.save': { auth: 'op', write: true, fn: opUserSave_ },
     'op.user.password': { auth: 'op', write: true, fn: opUserPassword_ },
     'op.log': { auth: 'op', fn: opLog_ }

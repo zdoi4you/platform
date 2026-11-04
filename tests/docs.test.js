@@ -56,7 +56,7 @@ const payload = over => ({ type: 'refuse', no: 'X', date: '2026-11-04', org, cas
 const text = p => flatten(Docs.pdfDefinition(p, 'x').content);
 
 test('refusal grounds are the same in the browser and on the server', () => {
-  assert.deepEqual(Object.assign({}, load().t.REFUSAL), Docs.REFUSAL);
+  assert.deepEqual(JSON.parse(JSON.stringify(load().t.GROUNDS)), Docs.GROUNDS);
 });
 
 test('documents carry the full addresses: postcode, oblast, municipality, settlement', () => {
@@ -90,6 +90,23 @@ test('the appeal clause names the court of the addressee, and old documents keep
   assert.equal(Docs.OBLASTS.length, 28);
   const places = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'site', 'data', 'places.json'), 'utf8'));
   assert.deepEqual(places.oblasts.map(o => o.n), Docs.OBLASTS, 'every oblast in the address list has a court');
+});
+
+test('legal grounds: several in one act, in every kind of act', () => {
+  assert.ok(Object.keys(Docs.REFUSAL).length >= 10);
+  const own = [{ id: 'c1', text: 'чл. 5 от Закон за пример' }];
+  assert.equal(Docs.groundsText('refuse', ['t2', 'c1'], own, ' Друго\nоснование '), Docs.REFUSAL.t2 + '; чл. 5 от Закон за пример; Друго основание');
+  assert.ok(text(Object.assign(payload({ groundText: 'чл. 5 от Закон за пример' }), { type: 'noinfo' })).includes('Правно основание: чл. 5 от Закон за пример.'));
+  assert.ok(text(Object.assign(payload({ groundText: 'чл. 31, ал. 5' }), { type: 'grant' })).includes('Допълнителни правни основания: чл. 31, ал. 5.'));
+  for (const type of ['grant', 'partial', 'refuse', 'dismiss', 'clarify', 'noinfo', 'forward', 'letter']) {
+    assert.equal(Docs.DEFS[type].fields.filter(f => f.type === 'grounds').length, 1, type);
+  }
+});
+
+test('a re-use decision cites the appeal provision for re-use', () => {
+  const kind = k => text(Object.assign(payload({}), { case: Object.assign({}, kase, { kind: k }) }));
+  assert.ok(kind('Повторно използване на информация').includes('чл. 41к'));
+  assert.ok(kind('Достъп до обществена информация').includes('чл. 40, ал. 1'));
 });
 
 test('motives appear in decisions and letters, split into paragraphs, before the operative part', () => {

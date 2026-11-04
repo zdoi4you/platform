@@ -716,6 +716,28 @@ function signerOptions(boot, date) {
     .map(s => [s.id, `${s.name}, ${s.position} (${s.act})`]));
 }
 
+/* отметки за основанията от закона и от списъка на организацията, плюс свободен текст за този документ */
+function groundsField(def, boot) {
+  const own = (boot.grounds || []).filter(g => g.scope === def.scope && g.active === 'Да');
+  const hidden = h('input', { type: 'hidden', name: 'groundKeys', value: '[]' });
+  const other = h('textarea', { name: 'groundOther', rows: 2, maxlength: 1000 });
+  const box = (key, text) => h('label', { class: 'check' }, h('input', { type: 'checkbox', 'data-ground': key, onchange: sync }), h('span', null, text));
+  const list = Object.entries(Docs.GROUNDS[def.scope]).map(([k, t]) => box(k, t)).concat(own.map(g => box(g.id, g.text)));
+  const wrap = h('div', { class: 'addr full field grounds' },
+    h('div', { class: 'addr-title' }, def.label, def.must ? h('span', { class: 'req', 'aria-hidden': 'true' }, ' *') : null),
+    hidden, list.length ? h('div', { class: 'stack ground-list' }, list) : null,
+    h('label', { class: 'field' }, h('span', null, 'Друго правно основание (само за този документ)'), other,
+      h('small', null, 'Постоянни основания на организацията се добавят в „Организация“.')));
+  function sync() {
+    const keys = [...wrap.querySelectorAll('input[data-ground]:checked')].map(i => i.dataset.ground);
+    hidden.value = JSON.stringify(keys);
+    other.setCustomValidity(def.must && !keys.length && !other.value.trim() ? 'Изберете или напишете поне едно правно основание.' : '');
+  }
+  other.addEventListener('input', sync);
+  sync();
+  return wrap;
+}
+
 /* първа стъпка: данни; втора стъпка: преглед и допълване на абзаците преди PDF */
 function docDialog(type, c, boot) {
   const def = DEFS[type], org = boot.profile;
@@ -727,7 +749,7 @@ function docDialog(type, c, boot) {
     h('div', { class: 'form-grid' },
       fieldEl({ k: '__date', label: 'Дата на документа', type: 'date', req: true }, today),
       fieldEl({ k: '__no', label: 'Номер (по желание)', hint: 'Празно = автоматичен номер.' }),
-      def.fields.map(f => (f.type === 'signer' ? fieldEl(Object.assign({}, f, { type: 'select', options: signerOptions(boot, today) }), '') : fieldEl(f, initial(f))))),
+      def.fields.map(f => (f.type === 'grounds' ? groundsField(f, boot) : f.type === 'signer' ? fieldEl(Object.assign({}, f, { type: 'select', options: signerOptions(boot, today) }), '') : fieldEl(f, initial(f))))),
     h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Отказ'), h('button', { class: 'btn primary', type: 'submit' }, 'Преглед и допълване →')));
   const dlg = h('dialog', { class: 'wide' }, form);
   dlg.addEventListener('close', () => dlg.remove());
@@ -743,7 +765,12 @@ function docDialog(type, c, boot) {
 
   submitter(form, async d => {
     const { __date: date, __no: no, ...fields } = d;
-    if (fields.groundKey) fields.groundText = Docs.REFUSAL[fields.groundKey];
+    const groundDef = def.fields.find(f => f.type === 'grounds');
+    if (groundDef) {
+      const text = Docs.groundsText(groundDef.scope, JSON.parse(fields.groundKeys || '[]'), boot.grounds, fields.groundOther);
+      if (text) fields.groundText = text;
+      if (type === 'dismiss') fields.ground = text;
+    }
     const draft = { type, no: no || '(номер)', date, org, case: c, f: fields };
     const original = Docs.editableParagraphs(draft);
     const areas = original.map(t => {
@@ -894,7 +921,8 @@ async function viewOrg() {
   setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Данни на организацията'), h('p', { class: 'muted small' }, 'Номер на организацията: ', h('b', { class: 'mono' }, b.me.no), '. Служителите го въвеждат при вход.'))),
     missing.length ? [h('p', { class: 'warnbox' }, 'Има непопълнени данни. Документи не могат да се генерират, докато не са попълнени всички.'), h('br')] : null,
     pending ? [h('p', { class: 'warnbox' }, 'Заявка ' + pending.id + ' чака решение от екипа на ЗДОИ4You.'), h('br')] : null,
-    h('div', { class: 'stack' }, form, history, signersCard(b.signers, admin, d => api('signers.save', d), () => { Store.boot = null; viewOrg().catch(showError); })));
+    h('div', { class: 'stack' }, form, history, signersCard(b.signers, admin, d => api('signers.save', d), () => { Store.boot = null; viewOrg().catch(showError); }),
+      groundsCard(b.grounds, admin, d => api('grounds.save', d), () => { Store.boot = null; viewOrg().catch(showError); })));
 }
 
 /* оператор: заявки за промяна на данни */
@@ -920,6 +948,35 @@ async function viewOpChanges() {
       c.status === 'Чака одобрение' ? h('div', { class: 'actions' },
         h('button', { class: 'btn primary', onclick: e => withBusy(e.target, () => decide(c, true)) }, 'Одобри и нанеси'),
         h('button', { class: 'btn danger', onclick: () => reject(c) }, 'Откажи')) : null))) : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'Няма заявки за промяна.')));
+}
+
+/* собствени правни основания на организацията */
+function groundsCard(list, canEdit, save, done) {
+  const scopes = Object.entries(Docs.GROUND_SCOPE_LABELS);
+  const edit = g => {
+    const form = h('form', null, h('h2', null, g ? 'Промяна на основание' : 'Ново правно основание'), h('div', { class: 'form-grid' },
+      fieldEl({ k: 'scope', label: 'За кои актове', type: 'select', options: scopes, req: true }, g ? g.scope : 'refuse'),
+      g ? fieldEl({ k: 'active', label: 'Активно', type: 'select', options: ['Да', 'Не'], req: true }, g.active) : null,
+      fieldEl({ k: 'text', label: 'Правно основание', type: 'textarea', req: true, rows: 3, hint: 'Например: чл. … от Закона за … – кратко описание.' }, g && g.text)),
+    h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Отказ'), h('button', { class: 'btn primary', type: 'submit' }, 'Запази')));
+    const dlg = h('dialog', null, form);
+    dlg.addEventListener('close', () => dlg.remove());
+    submitter(form, async d => {
+      await save(Object.assign(d, { id: g ? g.id : '', active: g ? d.active === 'Да' : true }));
+      dlg.close();
+      toast('Записано.');
+      done();
+    });
+    document.body.append(dlg); dlg.showModal();
+  };
+  return h('div', { class: 'card' },
+    h('div', { class: 'head' }, h('div', null, h('h2', null, 'Собствени правни основания'), h('p', { class: 'muted small' }, 'Появяват се като отметки при издаване на съответните актове, до основанията от ЗДОИ. Отговорността за верността им е на организацията.')),
+      canEdit ? h('button', { class: 'btn sm', type: 'button', onclick: () => edit(null) }, '+ Добави основание') : null),
+    list.length ? h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null, ['Основание', 'За кои актове', 'Състояние', ''].map(t => h('th', null, t)))),
+      h('tbody', null, list.map(g => h('tr', null, h('td', null, g.text), h('td', null, Docs.GROUND_SCOPE_LABELS[g.scope] || g.scope),
+        h('td', null, h('span', { class: 'pill ' + (g.active === 'Да' ? 'ok' : 'bad') }, g.active === 'Да' ? 'Активно' : 'Неактивно')),
+        h('td', { class: 'right' }, canEdit ? h('button', { class: 'btn sm', type: 'button', onclick: () => edit(g) }, 'Промени') : null)))))) : h('p', { class: 'muted' }, 'Няма добавени основания.'));
 }
 
 /* лица, определени да издават решения (чл. 28, ал. 2 ЗДОИ) */
@@ -1126,7 +1183,8 @@ async function viewOpOrg(no) {
           h('td', { class: 'right' }, h('div', { class: 'actions' }, h('button', { class: 'btn sm', onclick: () => userDialog(u, d => api('op.user.save', Object.assign(d, { no })), reload) }, 'Промени'), gen)));
       }))));
   setView(h('div', { class: 'head' }, h('div', null, h('p', { class: 'small' }, h('a', { href: '#/op/orgs' }, '← Всички организации')), h('h1', null, r.profile.name), h('p', { class: 'muted small' }, 'Номер на организацията: ', h('b', { class: 'mono' }, no))), h('span', { class: 'pill ' + (r.status === 'Активна' ? 'ok' : 'bad') }, r.status)),
-    h('div', { class: 'stack' }, users, signersCard(r.signers, true, d => api('op.signer.save', Object.assign(d, { no })), reload), form));
+    h('div', { class: 'stack' }, users, signersCard(r.signers, true, d => api('op.signer.save', Object.assign(d, { no })), reload),
+      groundsCard(r.grounds, true, d => api('op.ground.save', Object.assign(d, { no })), reload), form));
 }
 
 /* ---------- маршрути ---------- */

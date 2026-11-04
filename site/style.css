@@ -134,6 +134,7 @@ dialog::backdrop { background: rgba(5, 12, 24, .55); }
 dialog.wide { width: min(860px, calc(100vw - 24px)); }
 dialog h2 { margin-bottom: 12px; }
 .addr { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 10px; padding: 12px; gap: 10px; }
+.ground-list { gap: 8px; max-height: 280px; overflow-y: auto; padding-right: 4px; }
 .addr-title { font-weight: 600; font-size: 14px; }
 [hidden] { display: none !important; }
 dialog .actions { justify-content: flex-end; margin-top: 16px; }
