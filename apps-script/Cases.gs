@@ -16,18 +16,26 @@ const REFUSAL = {
 function withDue_(c, today) {
   const o = Object.assign({}, c);
   delete o._row;
-  o.due = ''; o.dueLabel = ''; o.daysLeft = null; o.thirdBy = '';
+  o.due = ''; o.dueLabel = ''; o.daysLeft = null;
+  o.thirdInvolved = false; o.thirdBy = ''; o.thirdByDays = null; o.thirdReplyBy = ''; o.thirdReplyDays = null;
   if (CASE_OPEN.indexOf(c.status) < 0 || !c.regDate) return o;
+  const left = iso => Math.round((parseIso_(iso) - parseIso_(today)) / DAY_MS_);
+  const ext30 = Number(c.ext30) || 0, ext31 = Number(c.ext31) || 0, base = c.clarifyGot || c.regDate;
   if (c.clarifyAsked && !c.clarifyGot) {
     o.due = term_(c.clarifyAsked, 30);
     o.dueLabel = 'Уточняване от заявителя (чл. 29, ал. 2)';
   } else {
-    const days = 14 + (Number(c.ext30) || 0) + (Number(c.ext31) || 0);
-    o.due = term_(c.clarifyGot || c.regDate, days);
-    o.dueLabel = 'Решение (чл. 28, ал. 1' + (Number(c.ext30) ? '; чл. 30' : '') + (Number(c.ext31) ? '; чл. 31' : '') + ')';
+    o.due = term_(base, 14 + ext30 + ext31);
+    o.dueLabel = 'Решение (чл. 28, ал. 1' + (ext30 ? '; чл. 30' : '') + (ext31 ? '; чл. 31' : '') + ')';
   }
-  if (Number(c.ext31) && !c.thirdAsked) o.thirdBy = term_(c.regDate, 7);
-  o.daysLeft = Math.round((parseIso_(o.due) - parseIso_(today)) / DAY_MS_);
+  o.daysLeft = left(o.due);
+  // трето лице: съгласието се иска до 7 дни от регистрирането (чл. 31, ал. 2);
+  // отговорът се очаква в удължения срок (чл. 31, ал. 1 и 4), а без изрично удължаване се смята с максималните 14 дни
+  o.thirdBy = term_(c.regDate, 7);
+  o.thirdByDays = c.thirdAsked ? null : left(o.thirdBy);
+  o.thirdReplyBy = term_(base, 14 + ext30 + (ext31 || 14));
+  o.thirdReplyDays = c.thirdGot ? null : left(o.thirdReplyBy);
+  o.thirdInvolved = !!(ext31 || c.thirdAsked || c.thirdGot || c.status === 'Чака трето лице');
   return o;
 }
 
@@ -59,7 +67,7 @@ function caseGet_(d, ctx) {
 function caseFields_(d) {
   const v = {
     kind: oneOf_(d.kind, CASE_KIND, 'Вид заявление'), regDate: isoDate_(d.regDate), channel: oneOf_(d.channel, CASE_CHANNEL, 'Начин на подаване'),
-    applicantType: oneOf_(d.applicantType, APPLICANT_TYPE, 'Вид заявител'), applicantName: line_(d.applicantName, 200), applicantSeat: line_(d.applicantSeat, 120),
+    applicantType: oneOf_(d.applicantType, APPLICANT_TYPE, 'Вид заявител'), applicantName: line_(d.applicantName, 200), applicantSeat: line_(d.applicantSeat, 120), applicantOblast: line_(d.applicantOblast, 80),
     applicantAddress: line_(d.applicantAddress, 300), applicantEmail: line_(d.applicantEmail, 200), applicantPhone: line_(d.applicantPhone, 40),
     subject: str_(d.subject, 8000), form: line_(d.form, 300), noPublish: d.noPublish === true || d.noPublish === 'Да' ? 'Да' : 'Не', owner: line_(d.owner, 40)
   };
@@ -90,13 +98,14 @@ function caseUpdate_(d, ctx) {
   const ss = ctx.ss(), c = findCase_(ss, d.regNo), v = caseFields_(d);
   Object.assign(v, {
     status: oneOf_(d.status, CASE_STATUS, 'Статус'), outcome: oneOf_(d.outcome || '', CASE_OUTCOME, 'Резултат'),
-    clarifyAsked: isoDate_(d.clarifyAsked), clarifyGot: isoDate_(d.clarifyGot), thirdAsked: isoDate_(d.thirdAsked),
+    clarifyAsked: isoDate_(d.clarifyAsked), clarifyGot: isoDate_(d.clarifyGot), thirdAsked: isoDate_(d.thirdAsked), thirdGot: isoDate_(d.thirdGot),
     ext30: limitDays_(d.ext30, 10, 'чл. 30'), ext31: limitDays_(d.ext31, 14, 'чл. 31'),
     served: isoDate_(d.served), servedHow: line_(d.servedHow, 120), published15c: isoDate_(d.published15c),
     appealed: d.appealed === 'Да' ? 'Да' : 'Не', appealNote: str_(d.appealNote, 1000)
   });
   // след получено уточняване срокът тече отново
   if (v.clarifyGot && !c.clarifyGot && v.status === 'Чака уточняване') v.status = 'В обработка';
+  if (v.thirdGot && !c.thirdGot && v.status === 'Чака трето лице') v.status = 'В обработка';
   const changed = Object.keys(v).filter(k => String(v[k]) !== String(c[k] === undefined ? '' : c[k]));
   if (!changed.length) return { regNo: c.regNo };
   const patch = {};
@@ -136,13 +145,21 @@ const DOC_TYPES = {
   noinfo: { cls: 'ИЗХ', need: [], apply: () => ({ outcome: 'Няма информация (чл. 33)', status: 'Приключена' }) },
   dismiss: { cls: 'ИЗХ', need: ['ground'], apply: () => ({ outcome: 'Без разглеждане', status: 'Приключена' }) },
   letter: { cls: 'ИЗХ', need: ['subjectLine', 'text'], apply: () => ({}) },
-  grant: { cls: 'РЕШ', decision: true, need: ['scope', 'accessDays', 'place', 'accessForm', 'costs'], apply: () => ({ outcome: 'Предоставен достъп', status: 'Решение издадено' }) },
-  partial: { cls: 'РЕШ', decision: true, need: ['scope', 'withheld', 'groundKey', 'factual', 'accessDays', 'place', 'accessForm', 'costs'], apply: () => ({ outcome: 'Частичен достъп', status: 'Решение издадено' }) },
-  refuse: { cls: 'РЕШ', decision: true, need: ['groundKey', 'factual'], apply: () => ({ outcome: 'Отказ', status: 'Решение издадено' }) },
+  grant: { cls: 'РЕШ', decision: true, need: ['scope', 'court', 'accessDays', 'place', 'accessForm', 'costs'], apply: () => ({ outcome: 'Предоставен достъп', status: 'Решение издадено' }) },
+  partial: { cls: 'РЕШ', decision: true, need: ['scope', 'withheld', 'groundKey', 'factual', 'court', 'accessDays', 'place', 'accessForm', 'costs'], apply: () => ({ outcome: 'Частичен достъп', status: 'Решение издадено' }) },
+  refuse: { cls: 'РЕШ', decision: true, need: ['groundKey', 'factual', 'court'], apply: () => ({ outcome: 'Отказ', status: 'Решение издадено' }) },
   protocol: { cls: 'ПРТ', need: ['given', 'accessForm', 'employee'], apply: () => ({ status: 'Приключена' }) },
   report: { cls: 'ОТЧ', noCase: true, need: ['year'], apply: null },
   art15: { cls: 'ЧЛ15', noCase: true, need: [], apply: null }
 };
+
+/* компетентният съд се определя по адреса на адресата */
+function courtForOblast_(oblast) {
+  if (oblast === 'София (столица)') return 'Административен съд София-град';
+  if (oblast === 'София') return 'Административен съд София-област';
+  return oblast ? 'Административен съд – ' + oblast : '';
+}
+const OBLASTS_ = ['Благоевград', 'Бургас', 'Варна', 'Велико Търново', 'Видин', 'Враца', 'Габрово', 'Добрич', 'Кърджали', 'Кюстендил', 'Ловеч', 'Монтана', 'Пазарджик', 'Перник', 'Плевен', 'Пловдив', 'Разград', 'Русе', 'Силистра', 'Сливен', 'Смолян', 'София', 'София (столица)', 'Стара Загора', 'Търговище', 'Хасково', 'Шумен', 'Ямбол'];
 
 function docCreate_(d, ctx) {
   const ss = ctx.ss(), type = str_(d.type, 20);
@@ -153,6 +170,12 @@ function docCreate_(d, ctx) {
   const raw = d.fields && typeof d.fields === 'object' ? d.fields : {};
   const f = {};
   Object.keys(raw).slice(0, 40).forEach(k => { f[str_(k, 40)] = str_(raw[k], k === 'edits' ? 40000 : 8000); });
+  const c = def.noCase ? null : findCase_(ss, d.regNo);
+  if (def.decision) {
+    if (!f.court && c && OBLASTS_.indexOf(c.applicantOblast) >= 0) f.court = courtForOblast_(c.applicantOblast);
+    if (f.court && OBLASTS_.map(courtForOblast_).indexOf(f.court) < 0) fail_('court', 'Изберете административен съд от списъка.');
+    if (!f.court) fail_('court', 'Посочете компетентния административен съд според адреса на адресата.');
+  }
   def.need.forEach(k => { if (!f[k]) fail_('required', 'Попълнете всички задължителни полета.'); });
   // подписващият идва само от списъка на организацията; ръчно подадено име се пренебрегва
   ['signer', 'signerPosition', 'signerAct'].forEach(k => delete f[k]);
@@ -173,8 +196,6 @@ function docCreate_(d, ctx) {
     }
     f.signer = s.name; f.signerPosition = s.position; f.signerAct = s.act;
   }
-  let c = null;
-  if (!def.noCase) c = findCase_(ss, d.regNo);
   const no = line_(d.no, 60) || def.cls + '-' + year + '-' + String(nextCounter_(ss, 'doc-' + def.cls + '-' + year)).padStart(4, '0');
   const payload = { type: type, no: no, date: date, org: org, f: f };
   if (c) {

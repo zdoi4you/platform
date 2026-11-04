@@ -4,6 +4,7 @@ const SCHEMA = {
   apps: ['Заявки за регистрация', { id: '№', at: 'Подадена', status: 'Статус', name: 'Организация', eik: 'ЕИК/БУЛСТАТ', type: 'Вид', email: 'Официален имейл', payload: 'Данни (JSON)', reason: 'Причина за отказ', decidedBy: 'Решил', decidedAt: 'Дата на решение', orgNo: 'Номер на организация', salt: 'Сол', hash: 'Хеш' }],
   orgs: ['Организации', { no: 'Номер', name: 'Наименование', eik: 'ЕИК/БУЛСТАТ', type: 'Вид', status: 'Статус', sheetId: 'ID на таблицата', approvedAt: 'Одобрена', approvedBy: 'Одобрил', adminUser: 'Първи администратор' }],
   ops: ['Оператори', { username: 'Потребител', name: 'Име', email: 'Имейл', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден' }],
+  changes: ['Заявки за промяна', { id: '№', at: 'Подадена', no: 'Номер на организация', orgName: 'Организация', by: 'Подал', status: 'Статус', basis: 'Основание', changed: 'Промени (JSON)', reason: 'Причина за отказ', decidedBy: 'Решил', decidedAt: 'Дата на решение' }],
   log: ['Дневник', { at: 'Време', actor: 'Потребител', action: 'Действие', ref: 'Обект', details: 'Подробности' }],
 
   profile: ['Профил', { key: 'Ключ', value: 'Стойност' }],
@@ -15,7 +16,8 @@ const SCHEMA = {
     status: 'Статус', outcome: 'Резултат', owner: 'Отговорник',
     clarifyAsked: 'Поискано уточняване', clarifyGot: 'Получено уточняване', ext30: 'Удължаване чл. 30 (дни)', ext31: 'Удължаване чл. 31 (дни)', thirdAsked: 'Поискано съгласие',
     refusalGround: 'Основание за отказ', decisionNo: 'Решение №', decisionDate: 'Дата на решение', served: 'Връчено на', servedHow: 'Начин на връчване',
-    published15c: 'Публикувано на платформата (чл. 15в)', appealed: 'Обжалвано', appealNote: 'Бележка за обжалването', updatedAt: 'Променена'
+    published15c: 'Публикувано на платформата (чл. 15в)', appealed: 'Обжалвано', appealNote: 'Бележка за обжалването', updatedAt: 'Променена',
+    applicantOblast: 'Област на адресата', thirdGot: 'Получен отговор от трето лице'
   }],
   events: ['Събития', { at: 'Време', regNo: 'Рег. №', user: 'Потребител', kind: 'Вид', text: 'Текст' }],
   docs: ['Документи', { id: 'ID', no: 'Номер', type: 'Вид', title: 'Заглавие', regNo: 'Рег. №', date: 'Дата', at: 'Създаден', author: 'Автор', payload: 'Данни (JSON)' }],

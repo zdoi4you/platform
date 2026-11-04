@@ -39,6 +39,10 @@
   const signerFields = [
     { k: 'signerId', label: 'Издава', type: 'signer', hint: 'Ръководителят или лице, определено по чл. 28, ал. 2. Лицата се добавят в „Организация“.' }
   ];
+  /* компетентният съд се определя по адреса на адресата */
+  const OBLASTS = ['Благоевград', 'Бургас', 'Варна', 'Велико Търново', 'Видин', 'Враца', 'Габрово', 'Добрич', 'Кърджали', 'Кюстендил', 'Ловеч', 'Монтана', 'Пазарджик', 'Перник', 'Плевен', 'Пловдив', 'Разград', 'Русе', 'Силистра', 'Сливен', 'Смолян', 'София', 'София (столица)', 'Стара Загора', 'Търговище', 'Хасково', 'Шумен', 'Ямбол'];
+  const courtForOblast = o => (o === 'София (столица)' ? 'Административен съд София-град' : o === 'София' ? 'Административен съд София-област' : o ? `Административен съд – ${o}` : '');
+  const courtField = { k: 'court', label: 'Компетентен административен съд', type: 'select', req: true, options: OBLASTS.map(courtForOblast), value: c => courtForOblast(c.applicantOblast), hint: 'Предлага се по областта от адреса на адресата. Проверете го, ако адресатът е посочил друг адрес.' };
   const decisionMotives = { k: 'motives', label: 'Мотиви', type: 'textarea', rows: 8, hint: 'Разделете абзаците с празен ред.' };
   const letterMotives = { k: 'motives', label: 'Мотиви или обосновка (по желание)', type: 'textarea', rows: 5, hint: 'Разделете абзаците с празен ред.' };
   const REFUSAL = {
@@ -93,10 +97,11 @@
       { k: 'third', label: 'Трето лице', req: true },
       { k: 'thirdAddress', label: 'Адрес на третото лице', type: 'address', req: true },
       { k: 'info', label: 'Информацията, която го засяга', type: 'textarea', req: true },
-      { k: 'by', label: 'Отговор до', type: 'date', req: true }
+      { k: 'by', label: 'Отговор до', type: 'date', req: true, value: c => c.thirdReplyBy, hint: 'Изчислен по чл. 31, ал. 1: регистрация + 14 дни + удължаването (до 14 дни), с преместване от неработен ден.' }
     ] },
     grant: { group: 'Решения', title: 'Решение за предоставяне на достъп', decision: true, effect: 'Статусът става „Решение издадено“. Срокът по чл. 28 спира да се следи.', fields: [
       { k: 'scope', label: 'Степен на осигурения достъп', req: true, value: 'Пълен достъп до исканата обществена информация.' },
+      courtField,
       decisionMotives,
       ...decisionAccess
     ] },
@@ -105,12 +110,14 @@
       { k: 'withheld', label: 'До коя част не се предоставя достъп', type: 'textarea', req: true },
       groundField,
       { k: 'factual', label: 'Фактическо основание', type: 'textarea', req: true },
+      courtField,
       decisionMotives,
       ...decisionAccess
     ] },
     refuse: { group: 'Решения', title: 'Решение за отказ (чл. 38)', decision: true, effect: 'Статусът става „Решение издадено“ с резултат „Отказ“.', fields: [
       groundField,
       { k: 'factual', label: 'Фактическо основание', type: 'textarea', req: true, rows: 6 },
+      courtField,
       decisionMotives
     ] },
     protocol: { group: 'Протоколи', title: 'Протокол за предоставяне на достъп (чл. 35, ал. 2)', effect: 'Преписката се приключва.', fields: [
@@ -205,7 +212,7 @@
 
   function appealClause(p) {
     const al = p.org.basis === 'чл. 3, ал. 1' ? 1 : 2;
-    return `Решението може да бъде обжалвано пред ${p.org.court} по реда на Административнопроцесуалния кодекс (чл. 40, ал. ${al} ЗДОИ) в 14-дневен срок от съобщаването му (чл. 149, ал. 1 АПК).`;
+    return `Решението може да бъде обжалвано пред ${p.f.court || p.org.court} по реда на Административнопроцесуалния кодекс (чл. 40, ал. ${al} ЗДОИ) в 14-дневен срок от съобщаването му (чл. 149, ал. 1 АПК).`;
   }
 
   function decisionHead(p, of) {
@@ -404,7 +411,7 @@
 
   const fileName = p => `${p.no}.pdf`.replace(/[^\p{L}\p{N}._-]+/gu, '_');
 
-  const api = { DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, pdfDefinition, editableParagraphs, fileName, fmt };
+  const api = { DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, OBLASTS, courtForOblast, pdfDefinition, editableParagraphs, fileName, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Docs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

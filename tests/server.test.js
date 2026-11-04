@@ -38,7 +38,7 @@ function approve(g, op, over) {
 }
 const caseData = (over = {}) => Object.assign({
   kind: 'Достъп до обществена информация', regDate: '2026-11-02', channel: 'Писмено', applicantType: 'Гражданин', applicantName: 'Петър Петров',
-  applicantAddress: 'ул. Втора 2', subject: 'Договори за 2025 г.', form: 'копия на материален носител'
+  applicantAddress: 'ул. Втора 2', applicantOblast: 'София (столица)', subject: 'Договори за 2025 г.', form: 'копия на материален носител'
 }, over);
 const updateData = (c, over = {}) => Object.assign({}, c, over);
 const setupTwo = () => {
@@ -64,7 +64,7 @@ test('holidays and terms: deadline ending on non-working day moves forward', () 
 
 test('registration requires all organization data and declaration', () => {
   const g = load(); operator(g);
-  for (const k of ['address', 'headName', 'unitEmail', 'court', 'adminEmail']) {
+  for (const k of ['address', 'postcode', 'headName', 'unitEmail', 'adminEmail']) {
     const r = apply(g, { [k]: '' });
     assert.equal(r.ok, false, k);
   }
@@ -218,7 +218,8 @@ test('roles: staff cannot administer, organization cannot reach operator actions
   g.call('activate', { no: e[1], username: e[2], token: e[3], hash: HASH('e') });
   const staff = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
   assert.equal(g.call('case.create', caseData(), staff).ok, true);
-  for (const act of ['users.list', 'users.save', 'org.save', 'log.list']) assert.equal(g.call(act, {}, staff).error, 'role', act);
+  for (const act of ['users.list', 'users.save', 'org.changeRequest', 'log.list']) assert.equal(g.call(act, {}, staff).error, 'role', act);
+  assert.equal(g.call('org.save', {}, staff).error, 'action', 'no direct editing');
   for (const act of ['op.apps', 'op.orgs', 'op.decide', 'op.log']) assert.equal(g.call(act, {}, a.token).error, 'role', act);
   assert.equal(g.call('case.list', {}, 'x'.repeat(64)).error, 'session');
   assert.equal(g.call('case.list', {}).error, 'session');
@@ -522,6 +523,92 @@ test('authorized persons table appears in organizations created before this vers
   assert.equal(g.call('org.bootstrap', {}, a.token).signers.length, 0);
   assert.equal(g.call('signers.save', sig(), a.token).ok, true);
   assert.ok(book.getSheetByName('Упълномощени лица'));
+});
+
+const profileOf = (g, token) => g.call('org.bootstrap', {}, token).profile;
+
+test('organizations cannot edit their data: only a request with a basis, approved by the operator', () => {
+  const { g, op, a, b } = setupTwo();
+  assert.equal(g.call('org.save', { name: 'Хак' }, a.token).error, 'action');
+  const cur = profileOf(g, a.token);
+  const next = Object.assign({}, cur, { address: 'нов адрес 5', eik: '831902088' });
+  assert.equal(g.call('org.changeRequest', next, a.token).error, 'required', 'basis is required');
+  assert.equal(g.call('org.changeRequest', Object.assign({}, cur, { changeBasis: 'x' }), a.token).error, 'nochange');
+  const r = g.call('org.changeRequest', Object.assign({}, next, { changeBasis: 'Решение № 5 на ОбС' }), a.token);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(profileOf(g, a.token).address, cur.address, 'nothing changes before approval');
+  assert.equal(g.call('org.changeRequest', Object.assign({}, next, { changeBasis: 'пак' }), a.token).error, 'pending');
+  assert.equal(g.call('op.changeDecide', { id: r.id, approve: true }, a.token).error, 'role', 'organization cannot approve itself');
+  const pending = g.call('org.changes', {}, a.token).changes[0];
+  assert.equal(pending.basis, 'Решение № 5 на ОбС');
+  assert.deepEqual(Object.keys(pending.changed).sort(), ['address', 'eik']);
+  assert.equal(pending.changed.address.from, cur.address);
+  assert.equal(g.call('org.changes', {}, b.token).changes.length, 0, 'other organizations do not see it');
+  assert.equal(g.call('op.changes', {}, op).changes[0].id, r.id);
+
+  assert.equal(g.call('op.changeDecide', { id: r.id, approve: true }, op).ok, true);
+  assert.equal(profileOf(g, a.token).address, 'нов адрес 5');
+  assert.equal(g.call('op.orgs', {}, op).orgs.find(o => o.no === a.no).eik, '831902088', 'register updated');
+  assert.equal(g.call('op.changeDecide', { id: r.id, approve: true }, op).error, 'state');
+  const again = profileOf(g, a.token);
+  assert.equal(g.call('org.changeRequest', Object.assign({}, again, { address: 'трети', changeBasis: 'y' }), a.token).ok, true, 'free again after decision');
+});
+
+test('a change request can be refused with a reason and changes nothing', () => {
+  const { g, op, a } = setupTwo();
+  const cur = profileOf(g, a.token);
+  const r = g.call('org.changeRequest', Object.assign({}, cur, { name: 'Друго име', changeBasis: 'основание' }), a.token);
+  assert.equal(g.call('op.changeDecide', { id: r.id, approve: false }, op).error, 'required');
+  assert.equal(g.call('op.changeDecide', { id: r.id, approve: false, reason: 'Няма документ' }, op).ok, true);
+  assert.equal(profileOf(g, a.token).name, cur.name);
+  assert.equal(g.call('org.changes', {}, a.token).changes[0].reason, 'Няма документ');
+});
+
+test('an approved change to another organization EIK is refused at decision time', () => {
+  const { g, op, a, b } = setupTwo();
+  const r = g.call('org.changeRequest', Object.assign({}, profileOf(g, a.token), { eik: '121758615', changeBasis: 'x' }), a.token);
+  assert.equal(g.call('op.changeDecide', { id: r.id, approve: true }, op).error, 'duplicate');
+  assert.ok(b);
+});
+
+test('the competent court follows the address of the addressee', () => {
+  const { g, a } = setupTwo();
+  const make = (oblast, fields) => {
+    const reg = g.call('case.create', caseData({ applicantOblast: oblast }), a.token).regNo;
+    return g.call('doc.create', { type: 'refuse', regNo: reg, title: 'x', fields: Object.assign({ groundKey: 't3', factual: 'факти' }, fields) }, a.token);
+  };
+  assert.equal(make('Варна').payload.f.court, 'Административен съд – Варна');
+  assert.equal(make('София (столица)').payload.f.court, 'Административен съд София-град');
+  assert.equal(make('София').payload.f.court, 'Административен съд София-област');
+  assert.equal(make('Варна', { court: 'Административен съд – Русе' }).payload.f.court, 'Административен съд – Русе', 'can be corrected');
+  assert.equal(make('', {}).error, 'court', 'no oblast and no choice');
+  assert.equal(make('Варна', { court: 'Измислен съд' }).error, 'court');
+  const reg = g.call('case.create', caseData({ applicantOblast: '' }), a.token).regNo;
+  assert.equal(g.call('doc.create', { type: 'noinfo', regNo: reg, title: 'x', fields: {} }, a.token).ok, true, 'letters need no court');
+});
+
+test('third-party deadlines are calculated (art. 31)', () => {
+  const { g, a } = setupTwo();
+  const reg = g.call('case.create', caseData({ regDate: '2026-11-02' }), a.token).regNo;
+  let c = g.call('case.get', { regNo: reg }, a.token).case;
+  assert.equal(c.thirdInvolved, false);
+  assert.equal(c.thirdBy, '2026-11-09', '7 days from registration');
+  assert.equal(c.thirdReplyBy, '2026-11-30', '14 + 14 days, ready for the letter');
+  const f = { third: 'ЕТ Иванов', thirdAddress: 'ул. 1', info: 'договор', by: '2026-11-30' };
+  assert.equal(g.call('doc.create', { type: 'thirdparty', regNo: reg, title: 'x', date: '2026-11-05', fields: f }, a.token).ok, true);
+  c = g.call('case.get', { regNo: reg }, a.token).case;
+  assert.equal(c.thirdInvolved, true);
+  assert.equal(c.thirdAsked, '2026-11-05');
+  assert.equal(c.thirdByDays, null, 'already asked');
+  assert.equal(typeof c.thirdReplyDays, 'number');
+  g.call('doc.create', { type: 'extend31', regNo: reg, title: 'x', date: '2026-11-05', fields: { days: '7', third: 'ЕТ Иванов' } }, a.token);
+  c = g.call('case.get', { regNo: reg }, a.token).case;
+  assert.equal(c.due, '2026-11-23', '14 + 7');
+  assert.equal(c.thirdReplyBy, '2026-11-23', 'reply follows the actual extension');
+  assert.equal(g.call('case.update', updateData(c, { thirdGot: '2026-11-10' }), a.token).ok, true);
+  c = g.call('case.get', { regNo: reg }, a.token).case;
+  assert.equal(c.status, 'В обработка', 'back to work after the reply');
+  assert.equal(c.thirdReplyDays, null);
 });
 
 test('honeypot silently drops bots', () => {

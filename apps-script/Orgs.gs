@@ -6,7 +6,7 @@ const ORG_BASES = ['чл. 3, ал. 1', 'чл. 3, ал. 2, т. 1', 'чл. 3, ал
 const ORG_FIELDS = {
   name: 200, type: 60, basis: 40, eik: 13, oblast: 80, municipality: 80, city: 80, postcode: 4, address: 300,
   phone: 40, email: 200, web: 200, headName: 120, headPosition: 120,
-  unitName: 200, unitAddress: 300, unitEmail: 200, unitPhone: 40, unitHours: 200, court: 120
+  unitName: 200, unitAddress: 300, unitEmail: 200, unitPhone: 40, unitHours: 200
 };
 const ADMIN_FIELDS = { adminName: 120, adminPosition: 120, adminEmail: 200, adminPhone: 40, adminUsername: 40 };
 
@@ -239,15 +239,81 @@ function saveProfile_(book, cur, next, actor) {
   return changed;
 }
 
-/* операторът променя и ЕИК; регистърът се обновява заедно с профила */
-function opOrgSave_(d, ctx) {
-  const m = master_(), reg = regOrg_(d.no), next = cleanOrg_(d), book = orgSheet_(reg);
+/* профилът и регистърът се променят заедно */
+function applyOrg_(m, reg, book, next, actor) {
   if (read_(m, 'orgs').some(x => x.no !== reg.no && x.eik === next.eik && x.status !== 'Закрита')) fail_('duplicate', 'Друга организация вече е с този ЕИК/БУЛСТАТ.');
-  const changed = saveProfile_(book, profile_(book), next, opActor_(ctx));
+  const changed = saveProfile_(book, profile_(book), next, actor);
   patch_(m, 'orgs', reg._row, { name: next.name, eik: next.eik, type: next.type });
   dropOrgCache_(reg.no);
+  return changed;
+}
+
+function opOrgSave_(d, ctx) {
+  const m = master_(), reg = regOrg_(d.no), next = cleanOrg_(d);
+  const changed = applyOrg_(m, reg, orgSheet_(reg), next, opActor_(ctx));
   audit_(m, ctx.username, 'Променени данни на организация', reg.no, changed.join(', '));
   return { profile: next };
+}
+
+/* ---------- заявки за промяна: организациите не редактират данните си, а искат промяна с основание ---------- */
+
+const PENDING_ = 'Чака одобрение';
+
+const changeView_ = r => {
+  const o = Object.assign({}, r);
+  delete o._row;
+  o.changed = JSON.parse(r.changed || '{}');
+  return o;
+};
+
+function orgChangeRequest_(d, ctx) {
+  const m = master_(), book = ctx.ss(), cur = profile_(book), next = cleanOrg_(d), basis = str_(d.changeBasis, 2000);
+  if (!basis) fail_('required', 'Посочете основанието за промяната.');
+  if (read_(m, 'changes').some(x => x.no === ctx.no && x.status === PENDING_)) fail_('pending', 'Вече има заявка за промяна, която чака решение.');
+  const changed = {};
+  Object.keys(ORG_FIELDS).forEach(k => { if (next[k] !== (cur[k] || '')) changed[k] = { from: cur[k] || '', to: next[k] }; });
+  if (!Object.keys(changed).length) fail_('nochange', 'Няма променени данни.');
+  const id = 'П-' + todayIso_().slice(0, 4) + '-' + String(nextCounter_(m, 'changes')).padStart(4, '0');
+  insert_(m, 'changes', { id: id, at: stamp_(), no: ctx.no, orgName: cur.name, by: ctx.username, status: PENDING_, basis: basis, changed: JSON.stringify(changed) });
+  audit_(book, ctx.username, 'Заявка за промяна на данните', id, Object.keys(changed).join(', '));
+  audit_(m, ctx.username, 'Заявка за промяна на данните', ctx.no, id);
+  const notify = PropertiesService.getScriptProperties().getProperty('NOTIFY');
+  if (notify) mail_(notify, 'Заявка за промяна ' + id, cur.name + '\n' + CFG.APP_URL + '#/op/changes');
+  return { id: id };
+}
+
+function orgChanges_(d, ctx) {
+  return { changes: read_(master_(), 'changes').filter(x => x.no === ctx.no).reverse().map(changeView_) };
+}
+
+function opChanges_() {
+  return { changes: read_(master_(), 'changes').reverse().map(changeView_) };
+}
+
+function opChangeDecide_(d, ctx) {
+  const m = master_(), r = read_(m, 'changes').find(x => x.id === str_(d.id, 40));
+  if (!r) fail_('notfound', 'Заявката не е намерена.');
+  if (r.status !== PENDING_) fail_('state', 'По тази заявка вече има решение.');
+  const reg = regOrg_(r.no), book = orgSheet_(reg);
+  const official = profile_(book).email;
+  if (d.approve !== true) {
+    const reason = str_(d.reason, 1000);
+    if (!reason) fail_('required', 'Посочете причина за отказа.');
+    patch_(m, 'changes', r._row, { status: 'Отказана', reason: reason, decidedBy: ctx.username, decidedAt: stamp_() });
+    audit_(book, opActor_(ctx), 'Отказана заявка за промяна', r.id, reason);
+    audit_(m, ctx.username, 'Отказана заявка за промяна', r.no, r.id);
+    mail_(official, 'ЗДОИ4You Платформа – заявка за промяна ' + r.id, 'Заявката за промяна на данните не е одобрена.\n\nПричина: ' + reason);
+    return {};
+  }
+  // промените се нанасят върху текущите данни и се проверяват отново
+  const changed = JSON.parse(r.changed), next = Object.assign({}, profile_(book));
+  Object.keys(changed).forEach(k => { next[k] = changed[k].to; });
+  const clean = cleanOrg_(next);
+  applyOrg_(m, reg, book, clean, opActor_(ctx));
+  patch_(m, 'changes', r._row, { status: 'Одобрена', decidedBy: ctx.username, decidedAt: stamp_() });
+  audit_(m, ctx.username, 'Одобрена заявка за промяна', r.no, r.id);
+  mail_(official, 'ЗДОИ4You Платформа – заявка за промяна ' + r.id, 'Заявката за промяна на данните на „' + clean.name + '“ е одобрена и данните са обновени.');
+  return {};
 }
 
 function opUserSave_(d, ctx) {
@@ -287,19 +353,6 @@ function orgBootstrap_(d, ctx) {
     profile: profile_(ss), users: users, signers: signersOf_(ss),
     me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false }
   };
-}
-
-function orgSave_(d, ctx) {
-  const ss = ctx.ss(), cur = profile_(ss), next = cleanOrg_(d);
-  // ЕИК идентифицира организацията и не се променя от профила
-  next.eik = cur.eik;
-  saveProfile_(ss, cur, next, ctx.username);
-  if (next.name !== cur.name || next.type !== cur.type) {
-    const m = master_(), reg = read_(m, 'orgs').find(x => x.no === ctx.no);
-    patch_(m, 'orgs', reg._row, { name: next.name, type: next.type });
-    dropOrgCache_(ctx.no);
-  }
-  return { profile: next };
 }
 
 function usersList_(d, ctx) {

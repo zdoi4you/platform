@@ -59,6 +59,16 @@ test('refusal grounds are the same in the browser and on the server', () => {
   assert.deepEqual(Object.assign({}, load().t.REFUSAL), Docs.REFUSAL);
 });
 
+test('the appeal clause names the court of the addressee, and old documents keep theirs', () => {
+  assert.ok(text(payload({ court: 'Административен съд – Варна' })).includes('Административен съд – Варна'));
+  assert.ok(text(payload({})).includes('Административен съд София-град'), 'stored documents without a court field');
+  assert.equal(Docs.courtForOblast('София (столица)'), 'Административен съд София-град');
+  assert.equal(Docs.courtForOblast('София'), 'Административен съд София-област');
+  assert.equal(Docs.OBLASTS.length, 28);
+  const places = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'site', 'data', 'places.json'), 'utf8'));
+  assert.deepEqual(places.oblasts.map(o => o.n), Docs.OBLASTS, 'every oblast in the address list has a court');
+});
+
 test('motives appear in decisions and letters, split into paragraphs, before the operative part', () => {
   for (const type of ['grant', 'partial', 'refuse']) {
     const t = text(Object.assign(payload({ motives: 'Първи мотив.\n\nВтори мотив.' }), { type }));

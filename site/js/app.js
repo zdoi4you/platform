@@ -12,7 +12,7 @@ const BASES = [
   ['чл. 3, ал. 2, т. 1', 'чл. 3, ал. 2, т. 1 – публичноправен субект, включително публичноправна организация'],
   ['чл. 3, ал. 2, т. 2', 'чл. 3, ал. 2, т. 2 – лице с дейност, финансирана от консолидирания бюджет или фондове на ЕС']
 ];
-const SEAT_FIELDS = [{ k: 'oblast', label: 'Област' }, { k: 'municipality', label: 'Община' }, { k: 'city', label: 'Населено място' }];
+const SEAT_FIELDS = [{ k: 'oblast', label: 'Област' }, { k: 'municipality', label: 'Община' }, { k: 'city', label: 'Населено място' }, { k: 'postcode', label: 'Пощенски код' }];
 const ORG_SECTIONS = [
   ['Организация', [
     { k: 'name', label: 'Пълно официално наименование', req: true, full: true },
@@ -24,11 +24,9 @@ const ORG_SECTIONS = [
   ]],
   ['Седалище и контакти', [
     { k: 'address', label: 'Адрес', type: 'address', seat: true, req: true },
-    { k: 'postcode', label: 'Пощенски код', req: true, pattern: '\\d{4}' },
     { k: 'phone', label: 'Телефон', req: true, type: 'tel' },
     { k: 'email', label: 'Официален имейл', req: true, type: 'email' },
-    { k: 'web', label: 'Интернет страница', req: true, type: 'url', placeholder: 'https://' },
-    { k: 'court', label: 'Компетентен административен съд', req: true, hint: 'Посочва се в решенията (чл. 40 ЗДОИ).', placeholder: 'Административен съд – …' }
+    { k: 'web', label: 'Интернет страница', req: true, type: 'url', placeholder: 'https://' }
   ]],
   ['Звено за приемане на заявления (чл. 15, ал. 1, т. 4)', [
     { k: 'unitName', label: 'Наименование на звеното', req: true, full: true },
@@ -88,7 +86,9 @@ const memo = {};
 const fetchJson = url => memo[url] || (memo[url] = fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).catch(e => { delete memo[url]; throw e; }));
 let listSeq = 0;
 
-function addressField(def, value, seat) {
+function addressField(def, value, seat, ctx) {
+  const presetOblast = def.oblastName && ctx ? ctx[def.oblastName] : '';
+  const oblastOut = def.oblastName ? h('input', { type: 'hidden', name: def.oblastName, value: presetOblast || '' }) : null;
   const placeholder = t => h('option', { value: '' }, t);
   const pick = (label, name) => {
     const select = h('select', { name: name || null, required: !!name && !!def.req, disabled: true, 'aria-label': label }, placeholder('Изберете…'));
@@ -100,6 +100,8 @@ function addressField(def, value, seat) {
   const quarter = h('input', { list: qList.id, 'aria-label': 'Ж.к. или квартал', autocomplete: 'off' });
   const street = h('input', { list: sList.id, 'aria-label': 'Улица или булевард', autocomplete: 'off' });
   const number = h('input', { 'aria-label': 'Номер, блок, вход, етаж, апартамент', placeholder: '№ 5, бл. 12, вх. А, ет. 3, ап. 8', autocomplete: 'off' });
+  const postcode = h('input', { 'aria-label': 'Пощенски код', name: seat ? 'postcode' : null, required: !!seat && !!def.req, pattern: '\\d{4}', maxlength: 4, inputmode: 'numeric', autocomplete: 'off', placeholder: '1000' });
+  if (seat) postcode.value = seat.postcode || '';
   const output = h('input', { name: def.k, required: !!def.req, maxlength: 300, autocomplete: 'off' });
   output.value = value || '';
   const note = h('small', null, 'Селища и райони: НСИ, ЕКАТТЕ. Улици и квартали: © OpenStreetMap contributors. Ако липсват, напишете ги ръчно.');
@@ -121,6 +123,7 @@ function addressField(def, value, seat) {
   const compose = () => {
     const { o, m, s } = current();
     const parts = [];
+    if (!seat && /^\d{4}$/.test(postcode.value.trim())) parts.push(`п.к. ${postcode.value.trim()}`);
     if (!seat && s) {
       if (s.n.startsWith('гр.')) parts.push(s.n);
       else parts.push(`обл. ${o.n}`, `общ. ${m.n}`, s.n);
@@ -151,15 +154,15 @@ function addressField(def, value, seat) {
   };
   const onMuni = keep => { const { m } = current(); fillSelect(place.select, m ? m.s.map(x => x.n) : [], keep); onPlace(); };
   const onOblast = (keepM, keepP) => { const { o } = current(); fillSelect(muni.select, o ? o.m.map(x => x.n) : [], keepM); onMuni(keepP); };
-  oblast.select.addEventListener('change', () => { onOblast(); compose(); });
+  oblast.select.addEventListener('change', () => { if (oblastOut) oblastOut.value = oblast.select.value; onOblast(); compose(); });
   muni.select.addEventListener('change', () => { onMuni(); compose(); });
   place.select.addEventListener('change', () => { onPlace(); compose(); });
   raion.select.addEventListener('change', compose);
-  [quarter, street, number].forEach(el => el.addEventListener('input', compose));
+  [quarter, street, number, postcode].forEach(el => el.addEventListener('input', compose));
 
   fetchJson('data/places.json').then(d => {
     data = d;
-    const keep = seat || {};
+    const keep = seat || { oblast: presetOblast };
     fillSelect(oblast.select, d.oblasts.map(x => x.n), keep.oblast);
     oblast.select.disabled = false;
     onOblast(keep.municipality, keep.city);
@@ -176,7 +179,9 @@ function addressField(def, value, seat) {
 
   return h('div', { class: 'addr full field' },
     h('div', { class: 'addr-title' }, def.label, def.req ? h('span', { class: 'req', 'aria-hidden': 'true' }, ' *') : null),
+    oblastOut,
     h('div', { class: 'form-grid' }, oblast.wrap, muni.wrap, place.wrap, raion.wrap,
+      h('label', { class: 'field' }, h('span', null, 'Пощенски код', seat && def.req ? h('span', { class: 'req', 'aria-hidden': 'true' }, ' *') : null), postcode),
       h('label', { class: 'field' }, h('span', null, 'Ж.к. или квартал'), quarter, qList),
       h('label', { class: 'field' }, h('span', null, 'Улица или булевард'), street, sList),
       h('label', { class: 'field' }, h('span', null, 'Номер, блок, вход'), number)),
@@ -184,7 +189,7 @@ function addressField(def, value, seat) {
 }
 
 function fieldEl(def, value, ctx) {
-  if (def.type === 'address') return addressField(def, value, def.seat ? (ctx || {}) : null);
+  if (def.type === 'address') return addressField(def, value, def.seat ? (ctx || {}) : null, ctx);
   const name = def.k, req = !!def.req;
   let input;
   if (def.type === 'select') {
@@ -382,7 +387,7 @@ function gate(card, wide) {
 function shell() {
   const me = session.me;
   const tabs = me.operator
-    ? [['#/op/apps', 'Заявки за регистрация'], ['#/op/orgs', 'Организации'], ['#/op/log', 'Дневник'], ['#/me', 'Моят профил']]
+    ? [['#/op/apps', 'Заявки за регистрация'], ['#/op/changes', 'Заявки за промяна'], ['#/op/orgs', 'Организации'], ['#/op/log', 'Дневник'], ['#/me', 'Моят профил']]
     : [['#/', 'Табло'], ['#/cases', 'Преписки'], ['#/docs', 'Документи'], ['#/reports', 'Отчети'], ['#/art15', 'Чл. 15'], ['#/org', 'Организация']]
       .concat(me.role === 'Администратор' ? [['#/users', 'Потребители'], ['#/log', 'Дневник']] : []).concat([['#/me', 'Моят профил']]);
   const nav = h('nav', { class: 'tabs', 'aria-label': 'Основно меню' }, tabs.map(([href, label]) => h('a', { href }, label)));
@@ -504,6 +509,12 @@ function duePill(c) {
   const txt = c.daysLeft < 0 ? `просрочена с ${-c.daysLeft} дни` : c.daysLeft === 0 ? 'изтича днес' : `остават ${c.daysLeft} дни`;
   return h('span', { class: 'pill ' + cls }, txt);
 }
+/* срок по чл. 31: дата и оставащи дни; след изпълнение показва какво е направено */
+function thirdRow(label, due, doneText, days) {
+  return h('div', { class: 'doc-row' },
+    h('div', null, h('div', { class: 'small' }, label), h('div', { class: 'mono' }, fmt(due))),
+    doneText ? h('span', { class: 'pill ok' }, doneText) : duePill({ daysLeft: days }));
+}
 function statusPill(s) {
   const cls = s === 'Приключена' ? 'ok' : s === 'Нова' ? 'info' : s === 'Чака уточняване' || s === 'Чака трето лице' ? 'warn' : '';
   return h('span', { class: 'pill ' + cls }, s);
@@ -518,7 +529,8 @@ function caseTable(rows) {
       h('td', null, c.applicantName),
       h('td', null, h('div', { class: 'subject' }, c.subject)),
       h('td', null, statusPill(c.status), c.outcome ? h('div', { class: 'small muted' }, c.outcome) : null),
-      h('td', null, c.due ? h('div', { class: 'mono small' }, fmt(c.due)) : null, duePill(c)),
+      h('td', null, c.due ? h('div', { class: 'mono small' }, fmt(c.due)) : null, duePill(c),
+        c.thirdInvolved ? h('div', { class: 'small muted' }, c.thirdAsked ? (c.thirdGot ? 'Трето лице: отговорило' : `Трето лице: отговор до ${fmt(c.thirdReplyBy)}`) : `Трето лице: искане до ${fmt(c.thirdBy)}`) : null),
       h('td', null, c.owner || '—'))))));
 }
 
@@ -569,7 +581,7 @@ function caseFields(users) {
       { k: 'applicantType', label: 'Вид заявител', type: 'select', options: APPLICANT_TYPE, req: true },
       { k: 'applicantName', label: 'Три имена или наименование', req: true },
       { k: 'applicantSeat', label: 'Седалище (за юридически лица)' },
-      { k: 'applicantAddress', label: 'Адрес за кореспонденция (адрес или имейл е задължителен, чл. 25, ал. 1, т. 4)', type: 'address' },
+      { k: 'applicantAddress', label: 'Адрес за кореспонденция (адрес или имейл е задължителен, чл. 25, ал. 1, т. 4). По областта се предлага компетентният съд.', type: 'address', oblastName: 'applicantOblast' },
       { k: 'applicantEmail', label: 'Имейл', type: 'email' },
       { k: 'applicantPhone', label: 'Телефон', type: 'tel' }
     ],
@@ -606,14 +618,15 @@ async function viewCase(regNo) {
       fieldEl({ k: 'status', label: 'Статус', type: 'select', options: CASE_STATUS, req: true }, c.status),
       fieldEl({ k: 'outcome', label: 'Резултат', type: 'select', options: CASE_OUTCOME }, c.outcome),
       F.main.map(f => fieldEl(f, c[f.k])))),
-    h('fieldset', null, h('legend', null, 'Заявител'), h('div', { class: 'form-grid' }, F.applicant.map(f => fieldEl(f, c[f.k])))),
+    h('fieldset', null, h('legend', null, 'Заявител'), h('div', { class: 'form-grid' }, F.applicant.map(f => fieldEl(f, c[f.k], c)))),
     h('fieldset', null, h('legend', null, 'Заявление'), h('div', { class: 'form-grid' }, F.request.map(f => fieldEl(f, f.k === 'noPublish' ? (c.noPublish || 'Не') : c[f.k])))),
     h('fieldset', null, h('legend', null, 'Срокове и движение'), h('div', { class: 'form-grid' },
       fieldEl({ k: 'clarifyAsked', label: 'Поискано уточняване (чл. 29)', type: 'date' }, c.clarifyAsked),
       fieldEl({ k: 'clarifyGot', label: 'Получено уточняване', type: 'date', hint: 'Срокът от 14 дни тече от тази дата.' }, c.clarifyGot),
       fieldEl({ k: 'ext30', label: 'Удължаване чл. 30 (дни)', type: 'number', min: 0, max: 10 }, c.ext30),
       fieldEl({ k: 'ext31', label: 'Удължаване чл. 31 (дни)', type: 'number', min: 0, max: 14 }, c.ext31),
-      fieldEl({ k: 'thirdAsked', label: 'Поискано съгласие от трето лице', type: 'date' }, c.thirdAsked))),
+      fieldEl({ k: 'thirdAsked', label: 'Поискано съгласие от трето лице', type: 'date' }, c.thirdAsked),
+      fieldEl({ k: 'thirdGot', label: 'Получен отговор от третото лице', type: 'date' }, c.thirdGot))),
     h('fieldset', null, h('legend', null, 'Връчване, публикуване, обжалване'), h('div', { class: 'form-grid' },
       fieldEl({ k: 'served', label: 'Връчено на', type: 'date' }, c.served),
       fieldEl({ k: 'servedHow', label: 'Начин на връчване', type: 'select', options: SERVED_HOW }, c.servedHow),
@@ -629,7 +642,10 @@ async function viewCase(regNo) {
 
   const dueCard = h('div', { class: 'card' }, h('h2', null, 'Срок'),
     c.due ? [h('p', { class: 'bigdue' }, fmt(c.due)), h('p', { class: 'small muted' }, c.dueLabel), duePill(c)] : h('p', { class: 'muted' }, c.decisionNo ? `Решение № ${c.decisionNo} от ${fmt(c.decisionDate)}` : 'Няма текущ срок.'),
-    c.thirdBy ? h('p', { class: 'warnbox small' }, `Съгласието на третото лице се иска до ${fmt(c.thirdBy)} (чл. 31, ал. 2).`) : null);
+    c.thirdInvolved ? h('div', { class: 'stack third' }, h('h3', null, 'Трето лице (чл. 31)'),
+      thirdRow('Искане на съгласие (ал. 2)', c.thirdBy, c.thirdAsked ? `изпратено на ${fmt(c.thirdAsked)}` : null, c.thirdByDays),
+      thirdRow('Отговор на третото лице (ал. 1)', c.thirdReplyBy, c.thirdGot ? `получен на ${fmt(c.thirdGot)}` : null, c.thirdReplyDays),
+      !Number(c.ext31) ? h('p', { class: 'small muted' }, 'Срокът за отговор е смятан с максималните 14 дни, защото още няма удължаване по чл. 31.') : null) : null);
 
   const types = Object.entries(DEFS).filter(([k]) => k !== 'report' && k !== 'art15');
   const groups = [...new Set(types.map(([, d]) => d.group))];
@@ -807,25 +823,73 @@ async function viewArt15() {
 
 /* ---------- организация, потребители ---------- */
 
+const ORG_LABELS = () => Object.fromEntries(ORG_SECTIONS.flatMap(s => s[1]).concat(SEAT_FIELDS).map(f => [f.k, f.label]));
+
+function changeList(changed) {
+  const labels = ORG_LABELS();
+  return h('div', { class: 'table-wrap' }, h('table', null,
+    h('thead', null, h('tr', null, ['Поле', 'Сега', 'Иска се'].map(t => h('th', null, t)))),
+    h('tbody', null, Object.entries(changed).map(([k, v]) => h('tr', null, h('td', null, labels[k] || k), h('td', null, v.from || '—'), h('td', null, h('b', null, v.to)))))));
+}
+const changeStatus = s => h('span', { class: 'pill ' + (s === 'Одобрена' ? 'ok' : s === 'Отказана' ? 'bad' : 'warn') }, s);
+
+/* организациите не променят данните си директно: администраторът праща заявка с основание */
 async function viewOrg() {
-  const b = await boot(), admin = b.me.role === 'Администратор';
+  Store.boot = null;
+  const [b, { changes }] = await Promise.all([boot(), api('org.changes')]);
+  const admin = b.me.role === 'Администратор', pending = changes.find(c => c.status === 'Чака одобрение');
   const missing = ORG_SECTIONS.flatMap(s => s[1]).concat(SEAT_FIELDS).filter(f => !b.profile[f.k]);
+  const canAsk = admin && !pending;
   const form = h('form', { class: 'card' },
-    ORG_SECTIONS.map(([title, fields]) => h('fieldset', { disabled: !admin }, h('legend', null, title), h('div', { class: 'form-grid' },
-      fields.map(f => fieldEl(f.k === 'eik' ? Object.assign({}, f, { readonly: true, hint: 'ЕИК/БУЛСТАТ не се променя тук. Обърнете се към ЗДОИ4You.' }) : f, b.profile[f.k], b.profile))))),
-    admin ? h('button', { class: 'btn primary', type: 'submit' }, 'Запази данните') : h('p', { class: 'muted small' }, 'Данните се променят от администратора на организацията.'));
-  if (admin) {
+    ORG_SECTIONS.map(([title, fields]) => h('fieldset', { disabled: !canAsk }, h('legend', null, title), h('div', { class: 'form-grid' },
+      fields.map(f => fieldEl(f, b.profile[f.k], b.profile))))),
+    canAsk ? [
+      h('fieldset', null, h('legend', null, 'Заявка за промяна'),
+        h('p', { class: 'note' }, 'Данните не се променят директно. Променете полетата по-горе, посочете основанието и изпратете заявка. Промяната влиза в сила след одобрение от екипа на ЗДОИ4You.'), h('br'),
+        fieldEl({ k: 'changeBasis', label: 'Основание за промяната', type: 'textarea', req: true, rows: 3, hint: 'Например: решение на общинския съвет, заповед, вписване в регистър, с номер и дата.' })),
+      h('button', { class: 'btn primary', type: 'submit' }, 'Изпрати заявка за промяна')
+    ] : h('p', { class: 'muted small' }, pending ? 'Данните не могат да се променят, докато заявката чака решение.' : 'Заявка за промяна може да изпрати администраторът на организацията.'));
+  if (canAsk) {
     submitter(form, async d => {
-      await api('org.save', d);
-      Store.boot = null;
-      const nb = await boot();
-      session.me.org = nb.profile.name; saveSession();
-      toast('Данните са записани.');
+      const r = await api('org.changeRequest', d);
+      toast('Заявка ' + r.id + ' е изпратена.');
+      viewOrg().catch(showError);
     });
   }
+  const history = changes.length ? h('div', { class: 'card stack' }, h('h2', null, 'Заявки за промяна'), changes.map(c => h('div', { class: 'stack change' },
+    h('div', { class: 'head' }, h('div', null, h('b', { class: 'mono' }, c.id), h('div', { class: 'small muted' }, fmtTime(c.at) + ' · ' + c.by)), changeStatus(c.status)),
+    h('p', { class: 'small' }, 'Основание: ' + c.basis),
+    c.reason ? h('p', { class: 'small' }, 'Причина за отказа: ' + c.reason) : null,
+    changeList(c.changed)))) : null;
   setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Данни на организацията'), h('p', { class: 'muted small' }, 'Номер на организацията: ', h('b', { class: 'mono' }, b.me.no), '. Служителите го въвеждат при вход.'))),
     missing.length ? [h('p', { class: 'warnbox' }, 'Има непопълнени данни. Документи не могат да се генерират, докато не са попълнени всички.'), h('br')] : null,
-    h('div', { class: 'stack' }, form, signersCard(b.signers, admin, d => api('signers.save', d), () => { Store.boot = null; viewOrg().catch(showError); })));
+    pending ? [h('p', { class: 'warnbox' }, 'Заявка ' + pending.id + ' чака решение от екипа на ЗДОИ4You.'), h('br')] : null,
+    h('div', { class: 'stack' }, form, history, signersCard(b.signers, admin, d => api('signers.save', d), () => { Store.boot = null; viewOrg().catch(showError); })));
+}
+
+/* оператор: заявки за промяна на данни */
+async function viewOpChanges() {
+  const { changes } = await api('op.changes');
+  const pendingCount = changes.filter(c => c.status === 'Чака одобрение').length;
+  const decide = (c, approve, reason) => api('op.changeDecide', { id: c.id, approve, reason }).then(() => { toast(approve ? 'Промяната е одобрена и нанесена.' : 'Заявката е отказана.'); viewOpChanges().catch(showError); });
+  const reject = c => {
+    const form = h('form', null, h('h2', null, 'Отказ за ' + c.orgName),
+      fieldEl({ k: 'reason', label: 'Причина (ще бъде изпратена на организацията)', type: 'textarea', req: true }),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Назад'), h('button', { class: 'btn danger', type: 'submit' }, 'Откажи заявката')));
+    const dlg = h('dialog', null, form);
+    dlg.addEventListener('close', () => dlg.remove());
+    submitter(form, async d => { await decide(c, false, d.reason); dlg.close(); });
+    document.body.append(dlg); dlg.showModal();
+  };
+  setView(h('div', { class: 'head' }, h('h1', null, 'Заявки за промяна на данни'), h('span', { class: 'pill warn' }, 'Чакат решение: ' + pendingCount)),
+    changes.length ? h('div', { class: 'stack' }, changes.map(c => h('div', { class: 'card stack' },
+      h('div', { class: 'head' }, h('div', null, h('h2', null, c.orgName), h('p', { class: 'small muted mono' }, c.id + ' · № ' + c.no + ' · ' + fmtTime(c.at) + ' · ' + c.by)), changeStatus(c.status)),
+      h('p', null, h('b', null, 'Основание: '), c.basis),
+      changeList(c.changed),
+      c.reason ? h('p', { class: 'small' }, 'Причина за отказа: ' + c.reason) : null,
+      c.status === 'Чака одобрение' ? h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', onclick: e => withBusy(e.target, () => decide(c, true)) }, 'Одобри и нанеси'),
+        h('button', { class: 'btn danger', onclick: () => reject(c) }, 'Откажи')) : null))) : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'Няма заявки за промяна.')));
 }
 
 /* лица, определени да издават решения (чл. 28, ал. 2 ЗДОИ) */
@@ -1060,6 +1124,7 @@ async function route() {
   try {
     if (session.me.operator) {
       if (page === 'me') return viewMe();
+      if (parts[1] === 'changes') return await viewOpChanges();
       if (parts[1] === 'orgs') return await viewOpOrgs();
       if (parts[1] === 'org') return await viewOpOrg(parts[2]);
       if (parts[1] === 'new') return viewOpNew();
