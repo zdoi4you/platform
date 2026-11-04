@@ -159,13 +159,16 @@
   /* добавеният при прегледа текст е извън номерацията, за да не измества редакциите */
   const extraText = p => paragraphs(p.f.extra).map(t => paraNode(t));
 
+  /* пълният адрес на организацията: п.к., област, община, населено място, адрес */
+  const orgAddress = o => [o.postcode && `п.к. ${o.postcode}`, o.oblast && `обл. ${o.oblast}`, o.municipality && `общ. ${o.municipality}`, o.city, o.address].filter(Boolean).join(', ');
+
   function letterhead(o) {
     return [
       { columns: [
         { image: 'logo', width: 118 },
         { stack: [
           { text: o.name, bold: true, fontSize: 12, color: '#0E3A6E' },
-          { text: `${o.postcode} ${o.city}, ${o.address}`, fontSize: 8.5, color: '#44546A' },
+          { text: orgAddress(o), fontSize: 8.5, color: '#44546A' },
           { text: `тел. ${o.phone} · ${o.email}`, fontSize: 8.5, color: '#44546A' },
           { text: `${o.web} · ЕИК/БУЛСТАТ ${o.eik}`, fontSize: 8.5, color: '#44546A' }
         ], alignment: 'right' }
@@ -187,12 +190,15 @@
   const toApplicant = c => ({ margin: [0, 0, 0, 12], stack: [
     { text: 'ДО', bold: true },
     { text: c.applicantName, bold: true },
+    ...(c.applicantSeat ? [{ text: `седалище: ${c.applicantSeat}` }] : []),
     { text: c.applicantAddress || '' },
-    { text: c.applicantEmail || '' }
+    { text: c.applicantEmail || '' },
+    ...(c.applicantPhone ? [{ text: `тел. ${c.applicantPhone}` }] : [])
   ] });
   const salute = c => (c.applicantType === 'Гражданин' || c.applicantType === 'Журналист или медия' ? `Уважаеми/а г-н/г-жо ${c.applicantName},` : 'Уважаеми дами и господа,');
   const reqRef = c => `заявление за достъп до обществена информация с рег. № ${c.regNo} от ${fmt(c.regDate)}`;
-  const reqAbout = c => `Заявител: ${c.applicantName}. Искана информация: ${c.subject}`;
+  const applicantLine = c => [c.applicantName, c.applicantSeat && `седалище: ${c.applicantSeat}`, c.applicantAddress && `адрес: ${c.applicantAddress}`, c.applicantEmail && `имейл: ${c.applicantEmail}`].filter(Boolean).join(', ');
+  const reqAbout = c => `Заявител: ${applicantLine(c)}. Искана информация: ${c.subject}`;
 
   function letter(p, opts) {
     const c = p.case;
@@ -321,7 +327,7 @@
         { text: `от ${fmt(p.date)}`, alignment: 'center' },
         { text: 'за предоставяне на достъп до обществена информация (чл. 35, ал. 2 ЗДОИ)', alignment: 'center', bold: true, margin: [0, 2, 0, 14] },
         P(`Преписка: рег. № ${c.regNo} от ${fmt(c.regDate)}${c.decisionNo ? `; решение № ${c.decisionNo} от ${fmt(c.decisionDate)}` : ''}.`),
-        P(`Заявител: ${c.applicantName}.`),
+        P(`Заявител: ${applicantLine(c)}.`),
         P(`Предоставена информация: ${p.f.given}`),
         P(`Форма на достъп: ${p.f.accessForm}.`),
         ...(p.f.paid ? [P(`Платени разходи и платежен документ: ${p.f.paid}`)] : []),
@@ -411,7 +417,7 @@
 
   const fileName = p => `${p.no}.pdf`.replace(/[^\p{L}\p{N}._-]+/gu, '_');
 
-  const api = { DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, OBLASTS, courtForOblast, pdfDefinition, editableParagraphs, fileName, fmt };
+  const api = { orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, OBLASTS, courtForOblast, pdfDefinition, editableParagraphs, fileName, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Docs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

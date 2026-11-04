@@ -59,6 +59,21 @@ test('refusal grounds are the same in the browser and on the server', () => {
   assert.deepEqual(Object.assign({}, load().t.REFUSAL), Docs.REFUSAL);
 });
 
+test('documents carry the full addresses: postcode, oblast, municipality, settlement', () => {
+  const full = Object.assign({}, org, { postcode: '4700', oblast: 'Смолян', municipality: 'Смолян', city: 'гр. Смолян', address: 'бул. България 12' });
+  assert.equal(Docs.orgAddress(full), 'п.к. 4700, обл. Смолян, общ. Смолян, гр. Смолян, бул. България 12');
+  const addr = 'п.к. 1000, обл. София (столица), общ. Столична, гр. София, ул. Шипка 5';
+  const kase2 = Object.assign({}, kase, { applicantAddress: addr, applicantSeat: 'София', applicantEmail: 'a@b.bg', applicantPhone: '0888' });
+  for (const type of ['clarify', 'refuse', 'grant', 'partial', 'protocol']) {
+    const t = flatten(Docs.pdfDefinition({ type, no: 'X', date: '2026-11-04', org: full, case: kase2, f: fields }, 'x').content);
+    assert.ok(t.includes('п.к. 4700, обл. Смолян, общ. Смолян'), type + ': адрес на организацията');
+    assert.ok(t.includes(addr), type + ': адрес на заявителя');
+    assert.ok(t.includes('София'), type);
+  }
+  const letter = flatten(Docs.pdfDefinition({ type: 'clarify', no: 'X', date: '2026-11-04', org: full, case: kase2, f: fields }, 'x').content);
+  assert.ok(letter.includes('седалище: София') && letter.includes('тел. 0888') && letter.includes('a@b.bg'));
+});
+
 test('the appeal clause names the court of the addressee, and old documents keep theirs', () => {
   assert.ok(text(payload({ court: 'Административен съд – Варна' })).includes('Административен съд – Варна'));
   assert.ok(text(payload({})).includes('Административен съд София-град'), 'stored documents without a court field');

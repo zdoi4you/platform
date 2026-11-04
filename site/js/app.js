@@ -86,6 +86,23 @@ const memo = {};
 const fetchJson = url => memo[url] || (memo[url] = fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).catch(e => { delete memo[url]; throw e; }));
 let listSeq = 0;
 
+/* разчита записан адрес, за да се възстанови изборът при редакция */
+function parseAddress(text) {
+  const out = { postcode: '', oblast: '', municipality: '', city: '', raion: '', quarter: '', street: '', rest: [] };
+  String(text || '').split(/,\s*/).map(t => t.trim()).filter(Boolean).forEach(t => {
+    let m;
+    if ((m = /^п\.\s?к\.\s*(\d{4})$/.exec(t))) out.postcode = m[1];
+    else if ((m = /^обл\.\s*(.+)$/.exec(t))) out.oblast = m[1];
+    else if ((m = /^общ\.\s*(.+)$/.exec(t))) out.municipality = m[1];
+    else if (/^(гр|с|ман)\.\s/.test(t)) out.city = t;
+    else if ((m = /^р-н\s+(.+)$/.exec(t))) out.raion = m[1];
+    else if (/^(ж\.?\s?к\.?|кв\.?|квартал)\s/i.test(t)) out.quarter = t;
+    else if (/^(ул\.?|улица|бул\.?|булевард|пл\.?|площад|алея|шосе|път)\s/i.test(t)) out.street = t;
+    else out.rest.push(t);
+  });
+  return out;
+}
+
 function addressField(def, value, seat, ctx) {
   const presetOblast = def.oblastName && ctx ? ctx[def.oblastName] : '';
   const oblastOut = def.oblastName ? h('input', { type: 'hidden', name: def.oblastName, value: presetOblast || '' }) : null;
@@ -104,6 +121,9 @@ function addressField(def, value, seat, ctx) {
   if (seat) postcode.value = seat.postcode || '';
   const output = h('input', { name: def.k, required: !!def.req, maxlength: 300, autocomplete: 'off' });
   output.value = value || '';
+  const initial = output.value, parsed = parseAddress(initial);
+  quarter.value = parsed.quarter; street.value = parsed.street; number.value = parsed.rest.join(', ');
+  if (!seat) postcode.value = parsed.postcode;
   const note = h('small', null, 'Селища и райони: НСИ, ЕКАТТЕ. Улици и квартали: © OpenStreetMap contributors. Ако липсват, напишете ги ръчно.');
   let data = null;
 
@@ -124,17 +144,26 @@ function addressField(def, value, seat, ctx) {
     const { o, m, s } = current();
     const parts = [];
     if (!seat && /^\d{4}$/.test(postcode.value.trim())) parts.push(`п.к. ${postcode.value.trim()}`);
-    if (!seat && s) {
-      if (s.n.startsWith('гр.')) parts.push(s.n);
-      else parts.push(`обл. ${o.n}`, `общ. ${m.n}`, s.n);
-    }
+    if (!seat && s) parts.push(`обл. ${o.n}`, `общ. ${m.n}`, s.n);
     if (raion.select.value) parts.push(`р-н ${raion.select.value}`);
     const q = quarter.value.trim(), st = street.value.trim(), num = number.value.trim();
     if (q) parts.push(/^(ж\.?\s?к\.?|кв\.?|квартал)\s/i.test(q) ? q : `ж.к. ${q}`);
     if (st) parts.push(/^(ул\.?|улица|бул\.?|булевард|пл\.?|площад|алея|шосе|път)\s/i.test(st) ? st : `ул. ${st}`);
     if (num) parts.push(num);
     if (parts.length) output.value = parts.join(', ');
+    checkComplete();
   };
+  /* нов адрес за документи трябва да е пълен; вече записан и непроменен адрес не спира работата */
+  const checkComplete = () => {
+    const v = output.value.trim();
+    let msg = '';
+    if (!seat && data && v && output.value !== initial) {
+      const p = parseAddress(v);
+      if (!p.postcode || !p.oblast || !p.municipality || !p.city) msg = 'Изберете област, община и населено място и въведете пощенски код.';
+    }
+    output.setCustomValidity(msg);
+  };
+  output.addEventListener('input', checkComplete);
   const loadStreets = async s => {
     qList.replaceChildren(); sList.replaceChildren();
     if (!s) return;
@@ -148,7 +177,7 @@ function addressField(def, value, seat, ctx) {
   const onPlace = () => {
     const { s } = current();
     const list = (s && data.raions[s.e]) || [];
-    fillSelect(raion.select, list);
+    fillSelect(raion.select, list, list.includes(parsed.raion) ? parsed.raion : undefined);
     raion.wrap.hidden = !list.length;
     loadStreets(s);
   };
@@ -162,7 +191,7 @@ function addressField(def, value, seat, ctx) {
 
   fetchJson('data/places.json').then(d => {
     data = d;
-    const keep = seat || { oblast: presetOblast };
+    const keep = seat || { oblast: parsed.oblast || presetOblast, municipality: parsed.municipality, city: parsed.city };
     fillSelect(oblast.select, d.oblasts.map(x => x.n), keep.oblast);
     oblast.select.disabled = false;
     onOblast(keep.municipality, keep.city);
@@ -185,7 +214,7 @@ function addressField(def, value, seat, ctx) {
       h('label', { class: 'field' }, h('span', null, 'Ж.к. или квартал'), quarter, qList),
       h('label', { class: 'field' }, h('span', null, 'Улица или булевард'), street, sList),
       h('label', { class: 'field' }, h('span', null, 'Номер, блок, вход'), number)),
-    h('label', { class: 'field' }, h('span', null, seat ? 'Адрес (без населеното място)' : 'Пълен адрес'), output, note));
+    h('label', { class: 'field' }, h('span', null, seat ? 'Улица, номер и останалото (областта, общината, селището и п.к. се добавят в документите)' : 'Пълен адрес (така излиза в документите)'), output, note));
 }
 
 function fieldEl(def, value, ctx) {
