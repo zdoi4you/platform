@@ -167,9 +167,9 @@
     const extra = DEFS[k].decision ? [] : (k === 'dismiss' ? [letterMotives] : [letterGrounds, letterMotives]);
     DEFS[k].fields = DEFS[k].fields.concat(extra, signerFields);
   });
-  DEFS.cover = { hidden: true, title: 'Съпроводително писмо', book: ['toName', 'toAddress'], bookType: 'Орган или друга организация', effect: 'Отделен PDF към документа, който изпращате.', fields: [
-    { k: 'toName', label: 'До', req: true },
-    { k: 'toAddress', label: 'Адрес или имейл на получателя', type: 'address' },
+  DEFS.cover = { group: 'Съпроводителни писма', title: 'Съпроводително писмо', book: ['toName', 'toAddress'], bookType: 'Орган или друга организация', effect: 'Отделен PDF към документа, който изпращате.', fields: [
+    { k: 'toName', label: 'До', req: true, value: c => (c ? c.applicantName : '') },
+    { k: 'toAddress', label: 'Адрес или имейл на получателя', type: 'address', value: c => (c ? c.applicantAddress || c.applicantEmail || '' : '') },
     { k: 'note', label: 'Допълнителен текст (по желание)', type: 'textarea', rows: 3 },
     { k: 'attachments', label: 'Приложения', type: 'attachments', req: true },
     ...signerFields
@@ -181,9 +181,21 @@
     { k: 'by', label: 'Срок за отговор', type: 'date', req: true, hint: 'Оставете време преди срока за решение по преписката.' },
     ...signerFields
   ] };
-  DEFS.internalReply = { group: 'Вътрешни бланки', title: 'Бланка за отговор от отдел', effect: 'Празна бланка, която отделът попълва и подписва.', fields: [
+  const yesNo = [['', 'Не е попълнено'], 'да', 'не'];
+  DEFS.internalReply = { group: 'Вътрешни бланки', title: 'Отговор на отдел', effect: 'Попълнете отговора и генерирайте готов документ. Непопълнените полета излизат като празни редове за ръчно попълване.', fields: [
     departmentField,
-    { k: 'requestNo', label: 'Към вътрешно искане № (по желание)' }
+    { k: 'requestNo', label: 'Към вътрешно искане № (по желание)' },
+    { k: 'hasInfo', label: 'Отделът разполага с исканата информация', type: 'select', options: [['', 'Не е попълнено'], 'да', 'частично', 'не'] },
+    { k: 'location', label: 'Местонахождение на информацията, ако не е в отдела' },
+    { k: 'protectedInfo', label: 'Съдържа защитена информация (класифицирана, тайна, лични данни)', type: 'select', options: yesNo },
+    { k: 'protectedBasis', label: 'Вид и основание' },
+    { k: 'thirdAffected', label: 'Засяга трето лице (чл. 31 ЗДОИ)', type: 'select', options: yesNo },
+    { k: 'thirdWho', label: 'Кое лице и данни за контакт' },
+    { k: 'opinion', label: 'Становище', type: 'textarea', rows: 5 },
+    { k: 'attachments', label: 'Приложения (по желание)', type: 'attachments' },
+    { k: 'respondent', label: 'Отговаря (имена)', hint: 'Празно = ръководителят на отдела.' },
+    { k: 'respondentPosition', label: 'Длъжност' },
+    { k: 'replyDate', label: 'Дата на отговора', type: 'date' }
   ] };
   DEFS.internalNote = { group: 'Вътрешни бланки', title: 'Докладна записка', effect: 'Докладна записка до ръководителя по преписката.', fields: [
     { k: 'fromName', label: 'От (имена)', req: true, value: (c, o, b) => (b && b.me && b.me.name) || '' },
@@ -343,7 +355,11 @@
   }
   const caseRef = c => (c ? `преписка с рег. № ${c.regNo} от ${fmt(c.regDate)}` : '');
   const deptTo = f => [f.departmentPosition || 'Ръководител', f.department].filter(Boolean).join(', ') + (f.departmentHead ? ` (${f.departmentHead})` : '');
-  const ofLabel = f => `документ „${f.ofTitle || ''}“ № ${f.ofNo || ''}${f.ofDate ? ` от ${fmt(f.ofDate)}` : ''}`;
+  const ofLabel = f => (f.ofNo ? `документ „${f.ofTitle || ''}“ № ${f.ofNo}${f.ofDate ? ` от ${fmt(f.ofDate)}` : ''}` : 'посочените по-долу документи');
+  const choice = (label, val, opts) => `${label}:   ${opts.map(o => `[${val === o ? ' X ' : '   '}] ${o}`).join('     ')}`;
+  /* попълненият отговор излиза като текст, а непопълненият като редове за ръчно попълване */
+  const answer = (label, val, lines) => [{ text: `${label}:`, margin: [0, 0, 0, 4] },
+    ...(val ? paragraphs(val).map(t => P(t)) : Array.from({ length: lines || 1 }, () => ({ text: FILL, margin: [0, 0, 0, 6] })))];
   const FILL = '......................................................................................................................................';
 
   const BUILD = {
@@ -376,16 +392,17 @@
     internalReply: p => [
       ...internalHead(p, 'ОТГОВОР НА ОТДЕЛ', [['ДО:', p.org.unitName], ['ОТ:', deptTo(p.f)], ['ОТНОСНО:', `${caseRef(p.case)}${p.f.requestNo ? `, вътрешно искане № ${p.f.requestNo}` : ''}`]]),
       P(`Искана информация: ${p.case.subject}`),
-      { text: 'Отделът разполага с исканата информация:   [   ] да     [   ] частично     [   ] не', margin: [0, 6, 0, 10] },
-      { text: 'Местонахождение на информацията, ако не е в отдела:', margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 10] },
-      { text: 'Съдържа защитена информация (класифицирана, тайна, лични данни):   [   ] да     [   ] не', margin: [0, 0, 0, 4] },
-      { text: 'Вид и основание:', margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 10] },
-      { text: 'Засяга трето лице (чл. 31 ЗДОИ):   [   ] да     [   ] не', margin: [0, 0, 0, 4] },
-      { text: 'Кое лице и данни за контакт:', margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 10] },
-      { text: 'Становище и приложения:', margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 10] },
+      { text: choice('Отделът разполага с исканата информация', p.f.hasInfo, ['да', 'частично', 'не']), margin: [0, 6, 0, 10] },
+      ...answer('Местонахождение на информацията, ако не е в отдела', p.f.location),
+      { text: choice('Съдържа защитена информация (класифицирана, тайна, лични данни)', p.f.protectedInfo, ['да', 'не']), margin: [0, 0, 0, 4] },
+      ...answer('Вид и основание', p.f.protectedBasis),
+      { text: choice('Засяга трето лице (чл. 31 ЗДОИ)', p.f.thirdAffected, ['да', 'не']), margin: [0, 0, 0, 4] },
+      ...answer('Кое лице и данни за контакт', p.f.thirdWho),
+      ...answer('Становище', p.f.opinion, 3),
       ...extraText(p),
-      { text: 'Дата: ............................', margin: [0, 6, 0, 0] },
-      signBlock(p, p.f.departmentHead, p.f.departmentPosition || `Ръководител, ${p.f.department || ''}`)
+      { text: `Дата: ${p.f.replyDate ? fmt(p.f.replyDate) : '............................'}`, margin: [0, 6, 0, 0] },
+      signBlock(p, p.f.respondent || p.f.departmentHead, p.f.respondentPosition || (p.f.respondent ? '' : p.f.departmentPosition || `Ръководител, ${p.f.department || ''}`)),
+      ...attachmentsBlock(p)
     ],
     internalNote: p => [
       ...internalHead(p, 'ДОКЛАДНА ЗАПИСКА', [['ДО:', `${p.org.headName}, ${p.org.headPosition}`], ['ОТ:', [p.f.fromName, p.f.fromPosition].filter(Boolean).join(', ')], ['ОТНОСНО:', p.f.subjectLine]]),
@@ -561,6 +578,71 @@
 
   const fileName = p => `${p.no}.pdf`.replace(/[^\p{L}\p{N}._-]+/gu, '_');
 
+  /* ---------- досие на преписка ---------- */
+
+  const stampText = t => { const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/.exec(t || ''); return m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]} ч.` : (t || ''); };
+  const sizeText = n => (n >= 1048576 ? `${(n / 1048576).toFixed(1).replace('.', ',')} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  const heading = text => ({ text, bold: true, fontSize: 12, color: '#0E3A6E', margin: [0, 14, 0, 6], tocItem: true });
+  const kv = rows => {
+    const body = rows.filter(r => r[1] !== '' && r[1] !== null && r[1] !== undefined).map(([k, v]) => [{ text: k, color: '#44546A' }, { text: String(v) }]);
+    return body.length ? { table: { widths: [165, '*'], body, dontBreakRows: true }, layout: { hLineWidth: (i, node) => (i === 0 || i === node.table.body.length ? 0 : 0.5), vLineWidth: () => 0, hLineColor: () => '#D8E2EF', paddingLeft: () => 0 } } : { text: 'Няма данни.', color: '#5A6B85' };
+  };
+  const grid = (head, rows, widths, size) => (rows.length
+    ? { table: { headerRows: 1, dontBreakRows: true, widths, body: [head.map(t => ({ text: t, bold: true, fontSize: size || 9 }))].concat(rows.map(r => r.map(c => ({ text: String(c === undefined || c === null || c === '' ? '—' : c), fontSize: size || 9 })))) }, layout: 'lightHorizontalLines' }
+    : { text: 'Няма.', color: '#5A6B85' });
+  const docTitle = d => (d.type === 'cover' ? d.title : (DEFS[d.type] || {}).title || d.title);
+
+  function dossierContent(data, opts) {
+    const c = data.case, o = opts || {}, signP = { f: { signMode: o.signMode }, org: data.org };
+    const withText = (data.docs || []).filter(d => d.payload && BUILD[d.payload.type]);
+    const content = [
+      ...letterhead(data.org),
+      { text: 'ДОСИЕ НА ПРЕПИСКА', bold: true, fontSize: 15, alignment: 'center', margin: [0, 6, 0, 2] },
+      { text: `рег. № ${c.regNo} от ${fmt(c.regDate)}`, bold: true, alignment: 'center' },
+      { text: `Генерирано на ${stampText(data.generatedAt)} от ${data.generatedBy}`, alignment: 'center', margin: [0, 2, 0, 10] },
+      { text: 'Досието е извлечение от данните в платформата към посочения момент. Контролните суми SHA-256 позволяват да се провери дали приложените отделно файлове съвпадат с качените.', fontSize: 9, color: '#44546A', margin: [0, 0, 0, 10] },
+      { toc: { title: { text: 'Съдържание', bold: true, fontSize: 12, color: '#0E3A6E', margin: [0, 0, 0, 6] }, numberStyle: { fontSize: 9.5 }, textStyle: { fontSize: 9.5 } }, margin: [0, 0, 0, 6] },
+      heading('Данни за преписката'),
+      kv([['Вид заявление', c.kind], ['Дата на регистриране', c.regDate && fmt(c.regDate)], ['Начин на подаване', c.channel], ['Предпочитана форма', c.form], ['Отказ от публикуване', c.noPublish], ['Статус', c.status], ['Резултат', c.outcome], ['Отговорник', c.owner], ['Решение №', c.decisionNo && `${c.decisionNo} от ${fmt(c.decisionDate)}`], ['Връчено на', c.served && fmt(c.served)], ['Начин на връчване', c.servedHow], ['Публикувано (чл. 15в)', c.published15c && fmt(c.published15c)], ['Обжалвано', c.appealed], ['Бележка за обжалването', c.appealNote], ['Въведена', stampText(c.createdAt)], ['Въвел', c.createdBy]]),
+      heading('Заявител'),
+      kv([['Име или наименование', c.applicantName], ['Вид', c.applicantType], ['ЕИК/БУЛСТАТ', c.applicantEik], ['Седалище', c.applicantSeat], ['Адрес', c.applicantAddress], ['Имейл', c.applicantEmail], ['Телефон', c.applicantPhone]]),
+      heading('Искана информация'),
+      { text: c.subject || '', alignment: 'justify' },
+      heading('Срокове'),
+      kv([['Текущ срок', c.due && `${fmt(c.due)}${c.dueLabel ? ` (${c.dueLabel})` : ''}`], ['Поискано уточняване', c.clarifyAsked && fmt(c.clarifyAsked)], ['Получено уточняване', c.clarifyGot && fmt(c.clarifyGot)], ['Удължаване по чл. 30 (дни)', c.ext30], ['Удължаване по чл. 31 (дни)', c.ext31], ['Искане до трето лице: срок', c.thirdInvolved && c.thirdBy && fmt(c.thirdBy)], ['Искане до трето лице: изпратено', c.thirdAsked && fmt(c.thirdAsked)], ['Отговор на трето лице: срок', c.thirdInvolved && c.thirdReplyBy && fmt(c.thirdReplyBy)], ['Отговор на трето лице: получен', c.thirdGot && fmt(c.thirdGot)]].map(([k, v]) => [k, v || ''])),
+      heading('Издадени документи'),
+      grid(['Номер', 'Дата', 'Документ', 'Издал'], (data.docs || []).map(d => [d.no, fmt(d.date), docTitle(d), d.author]), [85, 62, '*', 70]),
+      heading('Съдебни дела'),
+      grid(['Дело', 'Съд', 'Вид', 'Статус', 'Заседание', 'Бележки'], (data.courts || []).map(x => [`${x.caseNo}/${x.year}`, x.court, x.kind, x.status, x.nextHearing ? fmt(x.nextHearing) : '', x.note]), [55, '*', 70, 55, 58, 80]),
+      heading('Качени файлове'),
+      grid(['Файл', 'Към', 'Размер', 'Качен', 'SHA-256'], (data.files || []).map(f => [f.name, f.courtNo ? `дело ${f.courtNo}` : 'преписка', sizeText(f.size), `${stampText(f.at)}, ${f.by}`, f.sha256]), ['*', 48, 40, 78, 150], 7.5),
+      heading('История на преписката'),
+      grid(['Време', 'Потребител', 'Вид', 'Текст'], (data.events || []).map(e => [stampText(e.at), e.user, e.kind, e.text]), [76, 60, 58, '*'], 8.5),
+      { margin: [0, 26, 0, 0], unbreakable: true, stack: [{ text: 'Изготвил досието:', bold: true, margin: [0, 0, 0, 10] }, signLine(signP), { text: data.generatedBy || '', bold: true, margin: [0, 2, 0, 0] }, { text: data.generatedPosition || '' }] }
+    ];
+    withText.forEach((d, i) => {
+      content.push({ text: `Приложение ${i + 1}: ${docTitle(d)}${d.type === 'cover' ? ', изх.' : ''} № ${d.no} от ${fmt(d.date)}`, fontSize: 9, color: '#44546A', margin: [0, 0, 0, 8], tocItem: true, pageBreak: 'before' });
+      content.push(...buildContent(d.payload));
+    });
+    return content;
+  }
+
+  function dossierDefinition(data, logo, opts) {
+    return {
+      pageSize: 'A4',
+      pageMargins: [50, 40, 50, 54],
+      info: { title: `Досие на преписка ${data.case.regNo}`, author: data.org.name, creator: 'ЗДОИ4You Платформа' },
+      images: { logo },
+      defaultStyle: { font: 'Roboto', fontSize: 10.5, lineHeight: 1.22, color: '#111827' },
+      content: dossierContent(data, opts),
+      footer: (page, count) => ({
+        margin: [50, 14, 50, 0], fontSize: 8, color: '#5A6B85',
+        columns: [{ text: `Досие на преписка ${data.case.regNo} · генерирано на ${stampText(data.generatedAt)}` }, { text: `стр. ${page} от ${count}`, alignment: 'right', width: 70 }]
+      })
+    };
+  }
+  const dossierFileName = data => `Досие-${data.case.regNo}.pdf`.replace(/[^\p{L}\p{N}._-]+/gu, '_');
+
   const PERMS = [
     ['casesAll', 'Вижда всички преписки и адресати', 'Без това право вижда само възложените на него и въведените от него.'],
     ['casesEdit', 'Създава и променя преписки, адресати, дела и файлове, пише коментари', ''],
@@ -577,7 +659,7 @@
   const STAFF_PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports', 'art15'];
   const defaultPerms = role => (role === 'Администратор' ? PERMS.map(p => p[0]) : STAFF_PERMS);
 
-  const api = { signModeField, PERMS, STAFF_PERMS, defaultPerms, orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, GROUNDS, GROUND_SCOPE_LABELS, groundsText, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
+  const api = { dossierDefinition, dossierFileName, signModeField, PERMS, STAFF_PERMS, defaultPerms, orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, GROUNDS, GROUND_SCOPE_LABELS, groundsText, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Docs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

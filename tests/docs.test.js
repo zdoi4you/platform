@@ -203,3 +203,44 @@ test('postal codes: known places, source and credit', () => {
   assert.ok(Object.values(pc.codes).every(c => /^\d{4}$/.test(c)));
   assert.ok(pc.source.includes('GeoNames'));
 });
+
+test('department reply: filled answers become text, the rest stays as lines for manual filling', () => {
+  const blank = textOf('internalReply', {});
+  assert.ok(blank.includes('[   ] да') && blank.includes('.'.repeat(60)));
+  const filled = textOf('internalReply', { hasInfo: 'частично', protectedInfo: 'не', thirdAffected: 'да', location: 'Архив, стая 5', protectedBasis: 'няма', thirdWho: 'Фирма ООД', opinion: 'Първи абзац\n\nВтори абзац', replyDate: '2026-11-06', respondent: 'Гергана Колева', respondentPosition: 'Експерт', attachments: 'Договор № 5' });
+  assert.ok(filled.includes('[ X ] частично') && filled.includes('[ X ] не') && filled.includes('[ X ] да'));
+  assert.ok(filled.includes('Архив, стая 5') && filled.includes('Втори абзац') && filled.includes('Гергана Колева') && filled.includes('06.11.2026') && filled.includes('Договор № 5'));
+  assert.ok(!filled.includes('.'.repeat(60)), 'няма празни редове');
+  assert.ok(textOf('internalReply', { hasInfo: 'не' }).includes('Анна Иванова'), 'по подразбиране отговаря ръководителят');
+});
+
+test('cover letter works as a blank without a specific document', () => {
+  const t = textOf('cover', { ofNo: '', ofTitle: '', ofDate: '' });
+  assert.ok(t.includes('посочените по-долу документи') && t.includes('Приложения:'));
+  assert.ok(!Docs.DEFS.cover.hidden, 'предлага се в избора на документ');
+});
+
+test('dossier contains the case data, history, files with checksums and the full documents', () => {
+  const data = {
+    case: Object.assign({}, kase, { kind: 'Достъп', status: 'Приключена', outcome: 'Отказ', due: '', decisionNo: 'РЕШ-1', decisionDate: '2026-11-05', ext30: '', thirdInvolved: false }),
+    org, generatedAt: '2026-11-10T09:30:00', generatedBy: 'Мария Петрова', generatedPosition: 'Юрисконсулт',
+    events: [{ at: '2026-11-02T10:00:00', user: 'mpetrova', kind: 'Създаване', text: 'Преписката е въведена.' }],
+    docs: [
+      { no: 'РЕШ-1', type: 'refuse', title: 'Отказ', date: '2026-11-05', author: 'mpetrova', payload: { type: 'refuse', no: 'РЕШ-1', date: '2026-11-05', org, case: kase, f: fields } },
+      { no: 'ИЗХ-2', type: 'cover', title: 'Съпроводително писмо към № РЕШ-1', date: '2026-11-05', author: 'mpetrova', payload: null }
+    ],
+    courts: [{ caseNo: '1234', year: '2026', court: 'Административен съд – Варна', kind: 'Административно дело', status: 'Насрочено', nextHearing: '2026-12-10', note: '' }],
+    files: [{ name: 'Жалба.pdf', size: 2048, at: '2026-11-06T08:00:00', by: 'mpetrova', sha256: 'abc123', courtNo: '' }]
+  };
+  const def = Docs.dossierDefinition(data, 'data:image/png;base64,AA==', {});
+  const t = flatten(def.content);
+  for (const part of ['ДОСИЕ НА ПРЕПИСКА', kase.regNo, 'Петър Петров', 'Договори', 'РЕШЕНИЕ № РЕШ-1', 'Преписката е въведена.', '1234/2026', 'abc123', 'Жалба.pdf', 'Мария Петрова', 'Приложение 1:', 'Съпроводително писмо към № РЕШ-1']) assert.ok(t.includes(part), part);
+  assert.ok(!/undefined|\[object|NaN/.test(t), t.slice(0, 400));
+  assert.ok(!t.includes('Приложение 2:'), 'документ без текст е само в списъка');
+  assert.ok(def.content.some(n => n.toc), 'съдържание');
+  assert.ok(def.content.some(n => n.pageBreak === 'before'));
+  assert.ok(flatten(Docs.dossierDefinition(data, 'x', { signMode: 'electronic' }).content).includes('електронен подпис'));
+  assert.equal(Docs.dossierFileName(data), 'Досие-ЗДОИ-2026-0001.pdf');
+  const empty = flatten(Docs.dossierDefinition(Object.assign({}, data, { docs: [], events: [], courts: [], files: [] }), 'x', {}).content);
+  assert.ok(empty.includes('Няма.') && !/undefined/.test(empty));
+});

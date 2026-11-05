@@ -65,7 +65,7 @@ function load() {
     console: { log() {}, error() {} },
     Utilities: {
       DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' },
-      computeDigest: (a, s) => signed(crypto.createHash(a).update(String(s), 'utf8').digest()),
+      computeDigest: (a, s) => signed(crypto.createHash(a).update(Array.isArray(s) ? Buffer.from(s.map(b => b & 255)) : Buffer.from(String(s), 'utf8')).digest()),
       computeHmacSha256Signature: (v, k) => signed(crypto.createHmac('sha256', k).update(v, 'utf8').digest()),
       base64Encode: a => Buffer.from(a.map(b => b & 255)).toString('base64'),
       getUuid: () => crypto.randomUUID(),

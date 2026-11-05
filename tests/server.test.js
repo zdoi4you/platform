@@ -1216,3 +1216,65 @@ test('leading zeros survive everywhere, including columns added to older sheets'
   g.ctx.resetHeaders();
   assert.equal(g.call('org.bootstrap', {}, a.token).addressees[0].eik, '0012345678901');
 });
+
+test('blank cover letter: no source document, with or without a case', () => {
+  const { g, a, b } = setupTwo();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const fields = { toName: 'Сметна палата', attachments: 'Справка' };
+  const withCase = g.call('doc.create', { type: 'cover', regNo: reg, date: '2026-11-05', title: 'Съпроводително писмо', fields }, a.token);
+  assert.equal(withCase.ok, true, JSON.stringify(withCase));
+  assert.equal(withCase.payload.case.regNo, reg);
+  assert.ok(g.call('case.get', { regNo: reg }, a.token).docs.some(d => d.title === 'Съпроводително писмо'));
+  const free = g.call('doc.create', { type: 'cover', date: '2026-11-05', title: 'Съпроводително писмо', fields }, a.token);
+  assert.equal(free.ok, true, JSON.stringify(free));
+  assert.equal(free.payload.case, undefined);
+  assert.equal(g.call('doc.create', { type: 'cover', regNo: reg, fields }, b.token).error, 'notfound', 'чужда преписка');
+  assert.equal(g.call('doc.create', { type: 'cover', ofId: 'липсва', fields }, a.token).error, 'notfound');
+});
+
+test('case dossier: returns the full file, respects visibility and leaves a trace', () => {
+  const { g, a, b } = setupTwo();
+  const reg = g.call('case.create', caseData({ applicantType: 'Юридическо лице', applicantEik: '000696327' }), a.token).regNo;
+  g.call('case.comment', { regNo: reg, text: 'Вътрешна бележка' }, a.token);
+  const doc = g.call('doc.create', { type: 'noinfo', regNo: reg, date: '2026-11-04', title: 'Няма информация', fields: {} }, a.token);
+  const court = g.call('court.save', { regNo: reg, court: 'Съд', caseNo: '7', year: '2026', kind: 'Друго', status: 'Образувано' }, a.token);
+  const content = '%PDF съдържание';
+  const f1 = g.call('file.upload', { scope: 'case', ref: reg, name: 'Жалба.pdf', data: Buffer.from(content).toString('base64') }, a.token);
+  g.call('file.upload', { scope: 'court', ref: court.id, name: 'Съд.pdf', data: Buffer.from('x').toString('base64') }, a.token);
+  assert.equal(g.call('case.dossier', { regNo: reg }, b.token).error, 'notfound', 'друга организация');
+  assert.equal(g.call('case.dossier', { regNo: 'липсва' }, a.token).error, 'notfound');
+  const own = staffWith(g, a.token, a.no, 'own9', ['casesEdit']).token;
+  assert.equal(g.call('case.dossier', { regNo: reg }, own).error, 'notfound', 'без право към преписката');
+  const d = g.call('case.dossier', { regNo: reg }, a.token);
+  assert.equal(d.ok, true, JSON.stringify(d));
+  assert.equal(d.case.applicantEik, '000696327');
+  assert.equal(d.docs.find(x => x.no === doc.no).payload.no, doc.no, 'пълен документ');
+  assert.equal(d.files.length, 2);
+  const expected = require('crypto').createHash('sha256').update(content).digest('hex');
+  assert.equal(d.files.find(x => x.name === 'Жалба.pdf').sha256, expected, 'контролна сума на съдържанието');
+  assert.equal(d.files.find(x => x.name === 'Съд.pdf').courtNo, '7/2026');
+  assert.equal(JSON.stringify(d).includes('driveId'), false);
+  assert.ok(d.events.some(e => e.text === 'Вътрешна бележка'));
+  assert.equal(d.generatedBy, 'Мария Петрова');
+  const trimmed = g.call('case.dossier', { regNo: reg, comments: false, fullDocs: false }, a.token);
+  assert.ok(!trimmed.events.some(e => e.text === 'Вътрешна бележка'), 'без вътрешните коментари');
+  assert.equal(trimmed.docs.find(x => x.no === doc.no).payload, null);
+  assert.ok(g.call('case.get', { regNo: reg }, a.token).events.some(e => e.kind === 'Досие'), 'записано в историята');
+  assert.ok(g.call('log.list', {}, a.token).log.some(l => l.action === 'Генерирано досие на преписка'));
+  // файл отпреди контролните суми получава такава при първото досие
+  const sheet = [...g.books.values()].find(x => x.name.includes(a.no)).getSheetByName('Файлове');
+  sheet.cells[1][9] = '';
+  assert.equal(g.call('case.dossier', { regNo: reg }, a.token).files.find(x => x.id === f1.id).sha256, expected);
+  assert.equal(sheet.cells[1][9], expected);
+});
+
+test('department reply keeps the filled answers and is linked to the department', () => {
+  const { g, a } = setupTwo();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const dep = g.call('departments.save', dept(), a.token).id;
+  const r = g.call('doc.create', { type: 'internalReply', regNo: reg, date: '2026-11-06', title: 'Отговор на отдел', fields: { departmentId: dep, requestNo: 'ВТР-1', hasInfo: 'да', opinion: 'Становище', replyDate: '2026-11-06' } }, a.token);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.payload.f.opinion, 'Становище');
+  assert.equal(r.payload.f.department, 'Правен отдел');
+  assert.ok(g.call('case.get', { regNo: reg }, a.token).events.some(e => e.text.includes('от Правен отдел')));
+});

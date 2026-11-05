@@ -127,10 +127,42 @@ function fileUpload_(d, ctx) {
   if (info.used + bytes.length > info.limit) fail_('quota', 'Няма достатъчно свободно пространство (' + CFG.SPACE_MB + ' MB за организация).');
   const file = orgFilesFolder_(ctx.no).createFile(Utilities.newBlob(bytes, mime, name));
   const id = 'f' + randomToken_().slice(0, 15);
-  insert_(ss, 'files', { id: id, scope: scope, ref: ref, name: name, type: mime, size: bytes.length, driveId: file.getId(), by: ctx.username, at: stamp_() });
+  insert_(ss, 'files', { id: id, scope: scope, ref: ref, name: name, type: mime, size: bytes.length, driveId: file.getId(), by: ctx.username, at: stamp_(), sha256: bytesHash_(bytes) });
   audit_(ss, ctx.username, 'Качен файл', ref, id);
   if (scope === 'case') event_(ss, ref, ctx.username, 'Файл', 'Качен файл: ' + name);
   return { id: id };
+}
+
+const bytesHash_ = bytes => Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes).map(b => ('0' + (b & 255).toString(16)).slice(-2)).join('');
+
+/* ---------- досие на преписка: данните към момента на генериране; PDF се сглобява в браузъра ---------- */
+
+function caseDossier_(d, ctx) {
+  const ss = ctx.ss(), c = visibleCase_(ss, d.regNo, ctx);
+  const events = read_(ss, 'events').filter(e => e.regNo === c.regNo && (d.comments !== false || e.kind !== 'Коментар'))
+    .map(e => { const o = Object.assign({}, e); delete o._row; return o; });
+  const docs = read_(ss, 'docs').filter(x => x.regNo === c.regNo).map(x => {
+    let payload = null;
+    try { payload = JSON.parse(x.payload); } catch (_) { payload = null; }
+    return { no: x.no, type: x.type, title: x.title, date: x.date, at: x.at, author: x.author, payload: d.fullDocs === false ? null : payload };
+  });
+  const files = read_(ss, 'files').filter(f => f.scope === 'case' && f.ref === c.regNo);
+  const courts = read_(ss, 'courts').filter(x => x.regNo === c.regNo);
+  const allFiles = files.concat(read_(ss, 'files').filter(f => f.scope === 'court' && courts.some(x => x.id === f.ref)));
+  // файлове отпреди въвеждането на контролната сума
+  allFiles.forEach(f => {
+    if (f.sha256) return;
+    f.sha256 = bytesHash_(DriveApp.getFileById(f.driveId).getBlob().getBytes());
+    patch_(ss, 'files', f._row, { sha256: f.sha256 });
+  });
+  const me = read_(ss, 'users').find(u => u.username === ctx.username);
+  audit_(ss, ctx.username, 'Генерирано досие на преписка', c.regNo, '');
+  event_(ss, c.regNo, ctx.username, 'Досие', 'Генерирано досие на преписката.');
+  return {
+    case: withDue_(c, todayIso_()), org: profile_(ss), events: events, docs: docs, courts: courts.map(courtView_),
+    files: allFiles.map(f => Object.assign(fileView_(f), { courtNo: f.scope === 'court' ? (x => x.caseNo + '/' + x.year)(courts.find(x => x.id === f.ref)) : '' })),
+    generatedAt: stamp_(), generatedBy: me ? me.name : ctx.username, generatedPosition: me ? me.position : ''
+  };
 }
 
 function visibleFile_(ss, id, ctx) {

@@ -243,7 +243,7 @@ function docCreate_(d, ctx) {
   // съпроводителното писмо следва документа, който придружава: номер, дата и преписка идват от него
   ['ofNo', 'ofDate', 'ofTitle', 'department', 'departmentHead', 'departmentPosition'].forEach(k => delete f[k]);
   let source = null;
-  if (type === 'cover') {
+  if (type === 'cover' && d.ofId) {
     source = read_(ss, 'docs').find(x => x.id === str_(d.ofId, 16));
     if (!source || !docVisible_(source, ctx, read_(ss, 'cases'))) fail_('notfound', 'Документът не е намерен.');
     if (source.type === 'cover') fail_('value', 'Съпроводително писмо не се издава към съпроводително писмо.');
@@ -284,7 +284,7 @@ function docCreate_(d, ctx) {
     }
     f.signer = s.name; f.signerPosition = s.position; f.signerAct = s.act;
   }
-  const title = type === 'cover' ? 'Съпроводително писмо към № ' + source.no : line_(d.title, 200) || type;
+  const title = source ? 'Съпроводително писмо към № ' + source.no : line_(d.title, 200) || type;
   const no = line_(d.no, 60) || def.cls + '-' + year + '-' + String(nextCounter_(ss, 'doc-' + def.cls + '-' + year)).padStart(4, '0');
   const payload = { type: type, no: no, date: date, org: org, f: f };
   if (c) {
@@ -306,7 +306,7 @@ function docCreate_(d, ctx) {
     if (def.decision) { patch.decisionNo = no; patch.decisionDate = date; if (def.groundNeeded && chosen.keys.length) patch.refusalGround = chosen.keys.join(','); }
     patch.updatedAt = stamp_();
     patch_(ss, 'cases', c._row, patch);
-    event_(ss, c.regNo, ctx.username, 'Документ', title + ' № ' + no + (def.department ? ' до ' + f.department + (f.by ? ', срок до ' + f.by : '') : ''));
+    event_(ss, c.regNo, ctx.username, 'Документ', title + (source ? ', изх.' : '') + ' № ' + no + (def.department ? (type === 'internalReply' ? ' от ' : ' до ') + f.department + (f.by ? ', срок до ' + f.by : '') : ''));
   }
   audit_(ss, ctx.username, 'Генериран документ', no, type);
   return { id: id, no: no, payload: payload };

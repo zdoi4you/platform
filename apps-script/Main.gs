@@ -72,6 +72,7 @@ function actions_() {
     'case.create': { auth: 'user', perm: 'casesEdit', write: true, fn: caseCreateWithAddressee_ },
     'case.update': { auth: 'user', perm: 'casesEdit', write: true, fn: caseUpdate_ },
     'case.comment': { auth: 'user', perm: 'casesEdit', write: true, fn: caseComment_ },
+    'case.dossier': { auth: 'user', write: true, fn: caseDossier_ },
 
     'doc.create': { auth: 'user', write: true, fn: docCreate_ },
     'doc.list': { auth: 'user', fn: docList_ },

@@ -414,6 +414,32 @@ function pdfLib() {
   }
   return pdfReady;
 }
+async function downloadDossier(data, opts) {
+  const logo = await pdfLib();
+  window.pdfMake.createPdf(window.Docs.dossierDefinition(data, logo, opts)).download(window.Docs.dossierFileName(data));
+}
+function dossierDialog(c) {
+  const sel = h('select', { name: 'signMode' }, Docs.signModeField.options.map(([v, l]) => h('option', { value: v }, l)));
+  const form = h('form', null, h('h2', null, 'Досие на преписка ' + c.regNo),
+    h('p', { class: 'note' }, 'PDF с данните, сроковете, издадените документи, делата, списъка с качени файлове и контролните им суми, историята и пълния текст на документите. Файловете се прилагат отделно. Генерирането се записва в историята.'), h('br'),
+    h('div', { class: 'stack' },
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'fullDocs', checked: true }), h('span', null, 'Пълен текст на издадените документи')),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'comments' }), h('span', null, 'Вътрешните коментари в историята')),
+      h('small', { class: 'muted' }, 'Коментарите са вътрешни, затова не се включват, освен ако ги изберете.'),
+      h('label', { class: 'field' }, h('span', null, Docs.signModeField.label), sel)),
+    h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Отказ'), h('button', { class: 'btn primary', type: 'submit' }, 'Генерирай PDF')));
+  const dlg = h('dialog', null, form);
+  dlg.addEventListener('close', () => dlg.remove());
+  submitter(form, async d => {
+    const data = await api('case.dossier', { regNo: c.regNo, fullDocs: d.fullDocs === 'on', comments: d.comments === 'on' });
+    await downloadDossier(data, { signMode: d.signMode });
+    dlg.close();
+    toast('Досието е генерирано.');
+    viewCase(c.regNo).catch(showError);
+  });
+  document.body.append(dlg); dlg.showModal();
+}
+
 async function downloadPdf(payload) {
   const logo = await pdfLib();
   window.pdfMake.createPdf(window.Docs.pdfDefinition(payload, logo)).download(window.Docs.fileName(payload));
@@ -770,9 +796,12 @@ async function viewCase(regNo) {
   const pick = h('select', { 'aria-label': 'Вид документ' }, h('option', { value: '' }, 'Изберете документ…'),
     groups.map(g => h('optgroup', { label: g }, types.filter(([, d]) => d.group === g).map(([k, d]) => h('option', { value: k }, d.title)))));
   const docCard = h('div', { class: 'card stack' }, h('h2', null, 'Генериране на документ'), pick,
-    h('button', { class: 'btn primary', onclick: () => { if (pick.value) docDialog(pick.value, c, b, { items: attachmentItems(r) }); else toast('Изберете вид документ.'); } }, 'Продължи'));
+    h('button', { class: 'btn primary', onclick: () => { if (pick.value) docDialog(pick.value, c, b, { items: attachmentItems(r), docs: r.docs }); else toast('Изберете вид документ.'); } }, 'Продължи'));
 
-  const docsCard = h('div', { class: 'card' }, h('h2', null, 'Документи по преписката'), h('br'), r.docs.length ? docList(r.docs, () => viewCase(c.regNo).catch(showError)) : h('p', { class: 'muted' }, 'Още няма документи.'));
+  const docsCard = h('div', { class: 'card' }, h('h2', null, 'Документи по преписката'), h('br'), r.docs.length ? docList(r.docs, () => viewCase(c.regNo).catch(showError), async d => {
+    const { payload } = await api('doc.get', { id: d.id });
+    docDialog('internalReply', c, b, { items: attachmentItems(r), preset: { departmentId: payload.f.departmentId, requestNo: d.no, by: '' } });
+  }) : h('p', { class: 'muted' }, 'Още няма документи.'));
 
   const note = h('form', null, h('label', { class: 'field' }, h('span', null, 'Вътрешен коментар'), h('textarea', { name: 'text', rows: 2, required: true, maxlength: 2000 })), h('button', { class: 'btn sm block', type: 'submit' }, 'Добави'));
   submitter(note, async d => { await api('case.comment', { regNo: c.regNo, text: d.text }); viewCase(c.regNo).catch(showError); });
@@ -785,23 +814,28 @@ async function viewCase(regNo) {
     Store.boot = null;
     toast(r2.existed ? 'Вече е в адресатите.' : 'Записано в адресатите.');
   }));
-  setView(h('div', { class: 'head' }, h('div', null, h('p', { class: 'small' }, h('a', { href: '#/cases' }, '← Всички преписки')), h('h1', null, `Преписка ${c.regNo}`), h('p', { class: 'muted' }, c.applicantName)), h('div', { class: 'actions' }, can('casesEdit') ? saveApplicant : null, statusPill(c.status))),
+  setView(h('div', { class: 'head' }, h('div', null, h('p', { class: 'small' }, h('a', { href: '#/cases' }, '← Всички преписки')), h('h1', null, `Преписка ${c.regNo}`), h('p', { class: 'muted' }, c.applicantName)), h('div', { class: 'actions' }, h('button', { class: 'btn sm', type: 'button', onclick: () => dossierDialog(c) }, 'Досие (PDF)'), can('casesEdit') ? saveApplicant : null, statusPill(c.status))),
     h('div', { class: 'split' }, form, h('div', { class: 'stack' }, dueCard, types.length ? docCard : null, docsCard,
       caseCourtsCard(c, r.courts), filesCard({ scope: 'case', ref: c.regNo, files: r.files, space: r.space, reload: () => viewCase(c.regNo).catch(showError) }), hist)));
 }
 
-function docList(rows, after) {
+function docList(rows, after, onReply) {
   return h('div', { class: 'stack' }, rows.map(d => {
     const def = DEFS[d.type] || { title: d.type };
     const btn = h('button', { class: 'btn sm' }, 'PDF');
     btn.addEventListener('click', () => withBusy(btn, async () => { const r = await api('doc.get', { id: d.id }); await downloadPdf(r.payload); }));
-    return h('div', { class: 'doc-row' }, h('div', null, h('div', null, d.type === 'cover' ? d.title : def.title), h('div', { class: 'small muted mono' }, `№ ${d.no} · ${fmt(d.date)}`)), h('div', { class: 'actions' }, coverButton(d, after), btn));
+    return h('div', { class: 'doc-row' }, h('div', null, h('div', null, d.type === 'cover' ? d.title : def.title), h('div', { class: 'small muted mono' }, `№ ${d.no} · ${fmt(d.date)}`)), h('div', { class: 'actions' }, d.type === 'internalRequest' && onReply && can('letters') ? replyButton(d, onReply) : null, coverButton(d, after), btn));
   }));
+}
+function replyButton(d, onReply) {
+  const b = h('button', { class: 'btn sm', type: 'button' }, 'Попълни отговор');
+  b.addEventListener('click', () => withBusy(b, () => onReply(d)));
+  return b;
 }
 
 /* ---------- съпроводително писмо ---------- */
 
-const docLabel = d => `${d.type === 'cover' ? d.title : (DEFS[d.type] || {}).title || d.title} № ${d.no} от ${fmt(d.date)}`;
+const docLabel = d => `${d.type === 'cover' ? `${d.title}, изх.` : (DEFS[d.type] || {}).title || d.title} № ${d.no} от ${fmt(d.date)}`;
 const attachmentItems = r => r.docs.filter(d => d.type !== 'cover').map(docLabel).concat(r.files.map(f => f.name));
 
 function coverButton(d, after) {
@@ -821,16 +855,27 @@ function coverRecipient(p) {
   return c ? [c.applicantName, c.applicantAddress || c.applicantEmail || ''] : ['', ''];
 }
 
+function coverPreset(p) {
+  const title = (DEFS[p.type] || {}).title || p.type;
+  const [toName, toAddress] = coverRecipient(p);
+  return {
+    preset: { toName, toAddress, signMode: p.f.signMode || '', attachments: `${title} № ${p.no} от ${fmt(p.date)}` },
+    draft: { ofNo: p.no, ofDate: p.date, ofTitle: title }
+  };
+}
+
 async function coverDialog(id, after) {
   const [{ payload: p }, b] = await Promise.all([api('doc.get', { id }), boot()]);
   const details = p.case ? await api('case.get', { regNo: p.case.regNo }) : null;
-  const title = (DEFS[p.type] || {}).title || p.type;
-  const [toName, toAddress] = coverRecipient(p);
-  docDialog('cover', p.case || null, b, {
-    ofId: id, after, items: details ? attachmentItems(details) : [],
-    preset: { toName, toAddress, signMode: p.f.signMode || '', attachments: `${title} № ${p.no} от ${fmt(p.date)}` },
-    draft: { ofNo: p.no, ofDate: p.date, ofTitle: title }
-  });
+  docDialog('cover', p.case || null, b, Object.assign({ ofId: id, after, items: details ? attachmentItems(details) : [] }, coverPreset(p)));
+}
+
+/* бланка: писмото може да е към издаден документ или само със списък на приложенията */
+function coverSourceField(docs, onPick) {
+  const sel = h('select', { 'aria-label': 'Към документ' }, h('option', { value: '' }, 'Без конкретен документ'),
+    docs.filter(d => d.type !== 'cover').map(d => h('option', { value: d.id }, docLabel(d))));
+  sel.addEventListener('change', () => { if (sel.value) onPick(sel.value).catch(e => toast(e.message)); else onPick('').catch(e => toast(e.message)); });
+  return h('label', { class: 'field full' }, h('span', null, 'Към документ'), sel, h('small', null, 'Изборът попълва получателя и приложенията. Може и само със списък на приложенията.'));
 }
 
 /* приложенията са по един на ред; файловете и документите по преписката се добавят с един клик */
@@ -890,11 +935,23 @@ function docDialog(type, c, boot, options) {
     h('div', { class: 'form-grid' },
       fieldEl({ k: '__date', label: 'Дата на документа', type: 'date', req: true }, today),
       fieldEl({ k: '__no', label: 'Номер (по желание)', hint: 'Празно = автоматичен номер.' }),
+      type === 'cover' && opts.docs ? coverSourceField(opts.docs, async id => {
+        opts.ofId = id;
+        if (!id) { opts.draft = null; return; }
+        const { payload: p } = await api('doc.get', { id });
+        const { preset, draft } = coverPreset(p);
+        opts.draft = draft;
+        c = p.case || c;
+        form.querySelector('[name=toName]').value = preset.toName;
+        replaceAddress(form, def.fields.find(f => f.k === 'toAddress'), preset.toAddress);
+        form.querySelector('[name=attachments]').value = preset.attachments;
+        form.querySelector('[name=signMode]').value = preset.signMode;
+      }) : null,
       def.book ? addresseePicker(boot.addressees, a => {
         form.querySelector('[name="' + def.book[0] + '"]').value = a.name;
         if (def.book[1]) replaceAddress(form, def.fields.find(f => f.k === def.book[1]), a.address);
       }) : null,
-      def.fields.map(f => (f.type === 'attachments' ? attachmentsField(f, initial(f), opts.items) : f.type === 'department' ? fieldEl(Object.assign({}, f, { type: 'select', options: activeDepartments }), '') : f.type === 'grounds' ? groundsField(f, boot) : f.type === 'signer' ? fieldEl(Object.assign({}, f, { type: 'select', options: signerOptions(boot, today) }), '') : fieldEl(f, initial(f)))),
+      def.fields.map(f => (f.type === 'attachments' ? attachmentsField(f, initial(f), opts.items) : f.type === 'department' ? fieldEl(Object.assign({}, f, { type: 'select', options: activeDepartments }), initial(f) || '') : f.type === 'grounds' ? groundsField(f, boot) : f.type === 'signer' ? fieldEl(Object.assign({}, f, { type: 'select', options: signerOptions(boot, today) }), '') : fieldEl(f, initial(f)))),
       def.book && def.book[1] && can('casesEdit') ? h('label', { class: 'check full' }, h('input', { type: 'checkbox', name: '__saveAddr' }), h('span', null, 'Запази в адресатите')) : null),
     h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Отказ'), h('button', { class: 'btn primary', type: 'submit' }, 'Преглед и допълване →')));
   const dlg = h('dialog', { class: 'wide' }, form);
@@ -960,7 +1017,9 @@ function docDialog(type, c, boot, options) {
 
 async function viewDocs() {
   const { docs } = await api('doc.list');
-  setView(h('div', { class: 'head' }, h('h1', null, 'Документи')), h('div', { class: 'card' }, docs.length ? h('div', { class: 'table-wrap' }, h('table', null,
+  const newCover = h('button', { class: 'btn primary', type: 'button' }, '+ Съпроводително писмо');
+  newCover.addEventListener('click', () => withBusy(newCover, async () => docDialog('cover', null, await boot(), { docs, items: docs.filter(d => d.type !== 'cover').map(docLabel), after: () => viewDocs().catch(showError) })));
+  setView(h('div', { class: 'head' }, h('h1', null, 'Документи'), can('letters') ? newCover : null), h('div', { class: 'card' }, docs.length ? h('div', { class: 'table-wrap' }, h('table', null,
     h('thead', null, h('tr', null, ['Номер', 'Дата', 'Документ', 'Преписка', 'Автор', ''].map(t => h('th', null, t)))),
     h('tbody', null, docs.map(d => {
       const btn = h('button', { class: 'btn sm' }, 'PDF');

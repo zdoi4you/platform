@@ -30,7 +30,7 @@ const SCHEMA = {
   addressees: ['Адресати', { id: 'ID', type: 'Вид', name: 'Име или наименование', seat: 'Седалище', address: 'Адрес', oblast: 'Област', email: 'Имейл', phone: 'Телефон', by: 'Въвел', at: 'Въведен', eik: 'ЕИК/БУЛСТАТ' }],
   departments: ['Отдели', { id: 'ID', name: 'Наименование', head: 'Ръководител', position: 'Длъжност', email: 'Имейл', active: 'Активен', by: 'Въвел', at: 'Въведен' }],
   courts: ['Дела', { id: 'ID', regNo: 'Преписка', court: 'Съд', caseNo: '№ на дело', year: 'Година', kind: 'Вид', status: 'Статус', nextHearing: 'Следващо заседание', note: 'Бележки', by: 'Въвел', at: 'Въведено', updatedAt: 'Променено' }],
-  files: ['Файлове', { id: 'ID', scope: 'Вид', ref: 'Преписка или дело', name: 'Име', type: 'Тип', size: 'Размер', driveId: 'ID в Drive', by: 'Качил', at: 'Качен' }]
+  files: ['Файлове', { id: 'ID', scope: 'Вид', ref: 'Преписка или дело', name: 'Име', type: 'Тип', size: 'Размер', driveId: 'ID в Drive', by: 'Качил', at: 'Качен', sha256: 'SHA-256' }]
 };
 const ORG_TABLES = ['profile', 'users', 'cases', 'events', 'docs', 'art15', 'counters', 'signers', 'grounds', 'departments', 'addressees', 'courts', 'files', 'logins', 'log'];
 const HEADERS_CHECKED_ = {};
