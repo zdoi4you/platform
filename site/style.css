@@ -70,6 +70,7 @@ p { margin: 0; }
 .home-steps { list-style: none; counter-reset: step; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
 .home-steps li { counter-increment: step; display: flex; flex-direction: column; gap: 6px; padding: 18px; border-top: 3px solid var(--accent); background: var(--card); border-radius: 0 0 12px 12px; box-shadow: var(--shadow); }
 .home-steps li::before { content: counter(step); font-size: 30px; font-weight: 700; line-height: 1; color: var(--link); }
+/* разходи в решенията */
 .cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; align-items: end; }
 .cost-grid[hidden] { display: none; }
 .cost-sum { font-weight: 700; margin-top: 8px; }
