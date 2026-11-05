@@ -13,6 +13,29 @@
     'публикуване на информацията на платформата за достъп до обществена информация'
   ];
 
+  /*
+   * Наредба № Н-1 от 7 март 2022 г. (ДВ, бр. 22 от 2022 г.), нормативите са в стотинки. Сборът се превръща в евро и се закръгля веднъж.
+   * Сървърът изчислява същото (apps-script/Cases.gs). В обнародвания текст DVD дисковете са с „MB“, очевидна грешка за GB.
+   */
+  const COST_NORMS = {
+    a4: ['Хартия А4', 'лист', 1], a3: ['Хартия А3', 'лист', 2], tonerA4: ['Тонер за едностранно отпечатване А4', 'стр.', 2], tonerA3: ['Тонер за едностранно отпечатване А3', 'стр.', 4],
+    cd: ['CD диск 700 MB', 'бр.', 26], dvd47: ['DVD диск 4,7 GB', 'бр.', 30], dvd85: ['DVD диск 8,5 GB', 'бр.', 67],
+    usb4: ['USB флаш памет 4 GB', 'бр.', 346], usb8: ['USB флаш памет 8 GB', 'бр.', 572], usb16: ['USB флаш памет 16 GB', 'бр.', 793], usb32: ['USB флаш памет 32 GB', 'бр.', 947]
+  };
+  const NO_COST_FORM = /електронен път|платформата|устна справка/;
+  const money = n => n.toFixed(2).replace('.', ',');
+  function costsOf(items) {
+    let sum = 0;
+    const lines = Object.keys(COST_NORMS).filter(k => Number(items[k]) > 0).map(k => {
+      const n = COST_NORMS[k], qty = Number(items[k]), line = qty * n[2];
+      sum += line;
+      return `${n[0]}: ${qty} ${n[1]} × ${money(n[2] / 100)} лв. = ${money(line / 100)} лв.`;
+    });
+    if (!sum) return { text: 'Няма дължими разходи.', total: '' };
+    const total = money(Math.round(sum / 1.95583) / 100);
+    return { text: `${lines.join('; ')} Общо ${money(sum / 100)} лв., равни на ${total} евро по фиксирания курс 1 евро = 1,95583 лв. (Наредба № Н-1 от 7 март 2022 г.).`, total };
+  }
+
   /* чл. 15, ал. 1 ЗДОИ; ал. 3 задава кои точки важат за лицата по чл. 3, ал. 2, т. 1 */
   const ART15 = [
     [1, 'Описание на правомощията и данни за организацията, функциите и отговорностите на администрацията'],
@@ -88,7 +111,7 @@
     { k: 'accessDays', label: 'Срок за достъп (дни от получаване на решението)', type: 'number', req: true, min: 30, value: '30', hint: 'Не по-малко от 30 дни (чл. 34, ал. 4).' },
     { k: 'place', label: 'Място за достъп', req: true, value: (c, o) => o.unitAddress },
     { k: 'accessForm', label: 'Форма на достъп', type: 'select', req: true, options: ACCESS_FORMS, value: c => (ACCESS_FORMS.includes(c.form) ? c.form : '') },
-    { k: 'costs', label: 'Разходи', req: true, value: 'Няма дължими разходи.', hint: 'По нормативите на министъра на финансите (чл. 20, ал. 2). При достъп по имейл не се заплащат (чл. 35, ал. 3).' },
+    { k: 'costs', label: 'Разходи за материални носители', type: 'costs', req: true, value: 'Няма дължими разходи.', hint: 'По нормативите на министъра на финансите (чл. 20, ал. 2). При достъп по електронен път не се заплащат (чл. 35, ал. 3).' },
     { k: 'others', label: 'Други органи с по-пълна информация (по желание)', hint: 'чл. 34, ал. 2' }
   ];
   const groundField = { k: 'groundKeys', label: 'Правни основания', type: 'grounds', scope: 'refuse', must: true };
@@ -337,7 +360,11 @@
   }
 
   const accessNotes = p => {
-    const out = [];
+    const out = [], o = p.org;
+    if (p.f.costTotal && o.payIban) {
+      out.push(P(`Разходите в размер на ${p.f.costTotal} евро могат да се заплатят по банков път: получател ${o.name}, IBAN ${o.payIban}${o.payBic ? `, BIC ${o.payBic}` : ''}${o.payBank ? `, банка ${o.payBank}` : ''}${o.payCode ? `, код за вид плащане ${o.payCode}` : ''}, основание за плащане: разходи по ЗДОИ, решение № ${p.no}.`));
+    }
+    if (p.f.costTotal && o.payCash) out.push(P(`Разходите могат да се заплатят и на място: ${o.payCash}.`));
     if (p.f.others) out.push(P(`По-пълна информация могат да предоставят: ${p.f.others} (чл. 34, ал. 2 ЗДОИ).`));
     out.push(P('Достъпът се предоставя след заплащане на определените разходи и представяне на платежен документ, като за него се съставя протокол (чл. 35, ал. 1 и 2 ЗДОИ). Когато достъпът е поискан по електронен път на посочен имейл, информацията или интернет адресът се изпращат с решението, без протокол и без разходи (чл. 35, ал. 3 ЗДОИ). При неявяване в срока или неплащане на разходите е налице отказ на заявителя от достъп, освен за заявления, подадени по електронен път или чрез платформата (чл. 36 ЗДОИ).'));
     return out;
@@ -659,7 +686,7 @@
   const STAFF_PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports', 'art15'];
   const defaultPerms = role => (role === 'Администратор' ? PERMS.map(p => p[0]) : STAFF_PERMS);
 
-  const api = { dossierDefinition, dossierFileName, signModeField, PERMS, STAFF_PERMS, defaultPerms, orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, GROUNDS, GROUND_SCOPE_LABELS, groundsText, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
+  const api = { COST_NORMS, NO_COST_FORM, costsOf, dossierDefinition, dossierFileName, signModeField, PERMS, STAFF_PERMS, defaultPerms, orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, GROUNDS, GROUND_SCOPE_LABELS, groundsText, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Docs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

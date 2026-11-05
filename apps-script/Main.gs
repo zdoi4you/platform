@@ -38,12 +38,16 @@ function actions_() {
     'public.config': { auth: 'public', fn: publicConfig_ },
     'public.apply': { auth: 'public', write: true, fn: applyPublic_ },
     login: { auth: 'public', write: true, fn: login_ },
+    'login.code': { auth: 'public', write: true, fn: loginCode_ },
     activate: { auth: 'public', write: true, fn: activate_ },
     forgot: { auth: 'public', write: true, fn: forgot_ },
 
     extend: { auth: 'any', fn: extend_ },
     logout: { auth: 'any', fn: logout_ },
     password: { auth: 'any', write: true, fn: changePassword_ },
+    'twofa.status': { auth: 'any', fn: twofaStatus_ },
+    'twofa.start': { auth: 'any', write: true, fn: twofaStart_ },
+    'twofa.confirm': { auth: 'any', write: true, fn: twofaConfirm_ },
 
     'org.bootstrap': { auth: 'user', fn: orgBootstrap_ },
     'org.changeRequest': { auth: 'user', perm: 'changes', write: true, fn: orgChangeRequest_ },

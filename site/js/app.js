@@ -39,6 +39,13 @@ const ORG_SECTIONS = [
     { k: 'unitEmail', label: 'Имейл за заявления', req: true, type: 'email' },
     { k: 'unitPhone', label: 'Телефон', req: true, type: 'tel' },
     { k: 'unitHours', label: 'Работно време', req: true }
+  ]],
+  ['Плащане на разходи по ЗДОИ (по желание)', [
+    { k: 'payIban', label: 'IBAN', optional: true, hint: 'Излиза в решенията, когато има разходи за плащане.' },
+    { k: 'payBic', label: 'BIC', optional: true },
+    { k: 'payBank', label: 'Банка', optional: true },
+    { k: 'payCode', label: 'Код за вид плащане', optional: true, pattern: '\\d{6}', hint: '6 цифри, ако организацията използва такъв.' },
+    { k: 'payCash', label: 'Плащане на място', optional: true, full: true, placeholder: 'Например: на касата в сградата на общината, стая 5, 9–17 ч.' }
   ]]
 ];
 const ADMIN_SECTION = ['Администратор на организационния профил', [
@@ -533,13 +540,17 @@ function viewLogin(prefill) {
       fieldEl({ k: 'username', label: 'Потребителско име', req: true, autocomplete: 'username' }, username),
       fieldEl({ k: 'password', label: 'Парола', type: 'password', req: true, autocomplete: 'current-password' })),
     h('button', { class: 'btn primary block', type: 'submit' }, 'Вход'));
-  submitter(form, async d => {
-    const user = d.username.trim().toLowerCase(), num = d.no.trim();
-    const r = await api('login', { no: num, username: user, hash: await preHash(num, user, d.password), ip: await clientIp(), agent: navigator.userAgent });
+  const enter = r => {
     session = { token: r.token, me: r.me, exp: r.session };
     saveSession();
     location.hash = r.me.operator ? '#/op/apps' : '#/';
     route();
+  };
+  submitter(form, async d => {
+    const user = d.username.trim().toLowerCase(), num = d.no.trim();
+    const creds = { no: num, username: user, hash: await preHash(num, user, d.password), ip: await clientIp(), agent: navigator.userAgent };
+    const r = await api('login', creds);
+    if (r.twoFactor) loginCodeStep(r, creds, enter); else enter(r);
   });
   gate([
     h('h1', null, 'Вход в платформата'),
@@ -547,6 +558,56 @@ function viewLogin(prefill) {
     form,
     h('div', { class: 'gate-links' }, h('a', { href: '#/home' }, 'Начална страница'), h('a', { href: '#/forgot' }, 'Забравена парола'), applyLink)
   ]);
+}
+
+/* обратно броене; спира само, когато елементът вече не е на страницата */
+function countdown(seconds, onEnd) {
+  const el = h('b', { class: 'mono' }), end = Date.now() + seconds * 1000;
+  const paint = () => {
+    const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    el.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    return left;
+  };
+  paint();
+  const id = setInterval(() => {
+    if (!el.isConnected) { clearInterval(id); return; }
+    if (!paint()) { clearInterval(id); onEnd(); }
+  }, 500);
+  return el;
+}
+const codeField = () => fieldEl({ k: 'code', label: 'Код от имейла (8 цифри)', req: true, pattern: '\\d{8}', inputmode: 'numeric', autocomplete: 'one-time-code' });
+
+/* втора стъпка на входа; паролата не се пази, само производната ѝ стойност за „Нов код“, докато е отворен екранът */
+function loginCodeStep(first, creds, enter) {
+  let challenge = first.challenge;
+  const submit = h('button', { class: 'btn primary block', type: 'submit' }, 'Потвърди');
+  const expired = h('p', { class: 'small warnbox', hidden: true }, 'Кодът изтече. Поискайте нов.');
+  const timer = h('span');
+  const start = seconds => {
+    expired.hidden = true; submit.disabled = false;
+    timer.replaceChildren(countdown(seconds, () => { expired.hidden = false; submit.disabled = true; }));
+  };
+  const form = h('form', null, h('div', { class: 'stack' }, codeField()), submit);
+  submitter(form, async d => {
+    enter(await api('login.code', { challenge, code: d.code.trim(), ip: creds.ip, agent: creds.agent }));
+  });
+  const resend = h('button', { class: 'btn block', type: 'button' }, 'Изпрати нов код');
+  resend.addEventListener('click', () => withBusy(resend, async () => {
+    const r = await api('login', creds);
+    challenge = r.challenge;
+    form.reset();
+    start(r.validFor);
+    toast('Изпратен е нов код.');
+  }));
+  gate([
+    h('h1', null, 'Код за вход'),
+    h('p', { class: 'muted' }, 'Изпратихме 8-цифрен код на имейла ви. Важи още ', timer, ' мин.'),
+    form, expired, resend,
+    h('p', { class: 'small muted' }, 'Нямате достъп до имейла? Администраторът на организацията може да го смени.'),
+    h('div', { class: 'gate-links' }, h('a', { href: '#/login' }, 'Обратно към входа'))
+  ]);
+  start(first.validFor);
+  form.querySelector('[name=code]').focus();
 }
 
 function viewForgot() {
@@ -949,6 +1010,46 @@ function groundsField(def, boot) {
   return wrap;
 }
 
+/* количества по нормативите; сборът се вижда веднага, а сървърът го изчислява отново при издаване */
+function costsField(def, org) {
+  const items = h('input', { type: 'hidden', name: 'costItems', value: '{}' });
+  const text = h('input', { type: 'hidden', name: 'costs', value: 'Няма дължими разходи.' });
+  const total = h('input', { type: 'hidden', name: 'costTotal', value: '' });
+  const sum = h('p', { class: 'cost-sum' }), warn = h('p', { class: 'small warnbox', hidden: true }, 'Организацията няма въведени данни за плащане. Добавете ги със заявка за промяна в „Организация“ или допишете начина на плащане на следващата стъпка.');
+  const freeNote = h('p', { class: 'small note', hidden: true }, 'При избраната форма на достъп няма разходи за материални носители.');
+  const inputs = Object.entries(Docs.COST_NORMS).map(([k, n]) => [k, h('input', { type: 'number', min: 0, max: 100000, step: 1, inputmode: 'numeric', 'data-cost': k, 'aria-label': n[0] })]);
+  const of = key => inputs.find(i => i[0] === key)[1];
+  const draw = () => {
+    const chosen = {};
+    inputs.forEach(([k, el]) => { const q = Number(el.value); if (Number.isInteger(q) && q > 0) chosen[k] = q; });
+    const r = Docs.costsOf(chosen);
+    items.value = JSON.stringify(chosen); text.value = r.text; total.value = r.total;
+    sum.textContent = r.total ? `Общо: ${r.total} евро` : 'Няма дължими разходи.';
+    warn.hidden = !r.total || !!(org.payIban || org.payCash);
+  };
+  // при едностранен печат листовете са колкото страниците, докато потребителят не въведе друго
+  [['tonerA4', 'a4'], ['tonerA3', 'a3']].forEach(([pages, sheets]) => {
+    of(sheets).addEventListener('input', () => { of(sheets).dataset.manual = '1'; });
+    of(pages).addEventListener('input', () => { if (!of(sheets).dataset.manual) of(sheets).value = of(pages).value; });
+  });
+  inputs.forEach(([, el]) => el.addEventListener('input', draw));
+  const grid = h('div', { class: 'cost-grid' }, inputs.map(([k, el]) => h('label', { class: 'field' }, h('span', { class: 'small' }, `${Docs.COST_NORMS[k][0]} (${Docs.COST_NORMS[k][2] < 100 ? '0,' + String(Docs.COST_NORMS[k][2]).padStart(2, '0') : String(Docs.COST_NORMS[k][2] / 100).replace('.', ',')} лв./${Docs.COST_NORMS[k][1]})`), el)));
+  const wrap = h('div', { class: 'addr full field', 'data-costs': '1' }, h('div', { class: 'addr-title' }, def.label), items, text, total, grid, freeNote, sum, warn, h('small', null, def.hint));
+  wrap.bindForm = form => {
+    const access = form.querySelector('[name=accessForm]');
+    const sync = () => {
+      const free = Docs.NO_COST_FORM.test(access.value);
+      grid.hidden = free; freeNote.hidden = !free;
+      if (free) inputs.forEach(([, el]) => { el.value = ''; });
+      draw();
+    };
+    access.addEventListener('change', sync);
+    sync();
+  };
+  draw();
+  return wrap;
+}
+
 /* първа стъпка: данни; втора стъпка: преглед и допълване на абзаците преди PDF */
 function docDialog(type, c, boot, options) {
   const opts = options || {};
@@ -978,11 +1079,12 @@ function docDialog(type, c, boot, options) {
         form.querySelector('[name="' + def.book[0] + '"]').value = a.name;
         if (def.book[1]) replaceAddress(form, def.fields.find(f => f.k === def.book[1]), a.address);
       }) : null,
-      def.fields.map(f => (f.type === 'attachments' ? attachmentsField(f, initial(f), opts.items) : f.type === 'department' ? fieldEl(Object.assign({}, f, { type: 'select', options: activeDepartments }), initial(f) || '') : f.type === 'grounds' ? groundsField(f, boot) : f.type === 'signer' ? fieldEl(Object.assign({}, f, { type: 'select', options: signerOptions(boot, today) }), '') : fieldEl(f, initial(f)))),
+      def.fields.map(f => (f.type === 'attachments' ? attachmentsField(f, initial(f), opts.items) : f.type === 'department' ? fieldEl(Object.assign({}, f, { type: 'select', options: activeDepartments }), initial(f) || '') : f.type === 'grounds' ? groundsField(f, boot) : f.type === 'costs' ? costsField(f, org) : f.type === 'signer' ? fieldEl(Object.assign({}, f, { type: 'select', options: signerOptions(boot, today) }), '') : fieldEl(f, initial(f)))),
       def.book && def.book[1] && can('casesEdit') ? h('label', { class: 'check full' }, h('input', { type: 'checkbox', name: '__saveAddr' }), h('span', null, 'Запази в адресатите')) : null),
     h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Отказ'), h('button', { class: 'btn primary', type: 'submit' }, 'Преглед и допълване →')));
   const dlg = h('dialog', { class: 'wide' }, form);
   dlg.addEventListener('close', () => dlg.remove());
+  form.querySelectorAll('[data-costs]').forEach(w => w.bindForm(form));
 
   const dateEl = form.querySelector('[name=__date]'), signerEl = form.querySelector('[name=signerId]');
   if (signerEl) {
@@ -1414,7 +1516,7 @@ async function viewOrg() {
   Store.boot = null;
   const [b, { changes }] = await Promise.all([boot(), api('org.changes')]);
   const pending = changes.find(c => c.status === 'Чака одобрение');
-  const missing = ORG_SECTIONS.flatMap(s => s[1]).concat(SEAT_FIELDS).filter(f => !b.profile[f.k]);
+  const missing = ORG_SECTIONS.flatMap(s => s[1]).concat(SEAT_FIELDS).filter(f => !f.optional && !b.profile[f.k]);
   const canAsk = can('changes') && !pending;
   const form = h('form', { class: 'card' },
     ORG_SECTIONS.map(([title, fields]) => h('fieldset', { disabled: !canAsk }, h('legend', null, title), h('div', { class: 'form-grid' },
@@ -1603,7 +1705,7 @@ async function viewUsers() {
         invite.addEventListener('click', () => withBusy(invite, async () => { const r = await api('users.invite', { username: u.username }); toast(r.emailed ? 'Връзката е изпратена на ' + u.email + '.' : 'Имейлът не се изпрати. Опитайте отново.'); }));
         return h('tr', null, h('td', { class: 'mono' }, u.username), h('td', null, u.name), h('td', null, u.position), h('td', null, u.email), h('td', null, u.role),
           h('td', { class: 'small' }, u.perms.length === Docs.defaultPerms(u.role).length && Docs.defaultPerms(u.role).every(k => u.perms.includes(k)) ? 'по подразбиране' : Docs.PERMS.filter(p => u.perms.includes(p[0])).map(p => p[1]).join('; ') || 'без права'),
-          h('td', null, u.active !== 'Да' ? h('span', { class: 'pill bad' }, 'Спрян') : u.pending ? h('span', { class: 'pill warn' }, 'Чака парола') : h('span', { class: 'pill ok' }, 'Активен')),
+          h('td', null, u.active !== 'Да' ? h('span', { class: 'pill bad' }, 'Спрян') : u.pending ? h('span', { class: 'pill warn' }, 'Чака парола') : h('span', { class: 'pill ok' }, 'Активен'), u.twofa === 'Да' ? h('div', { class: 'small muted' }, 'Вход с код') : null),
           h('td', { class: 'mono small' }, fmtTime(u.lastLogin)),
           h('td', { class: 'right' }, h('div', { class: 'actions' }, h('button', { class: 'btn sm', onclick: () => edit(u) }, 'Промени'), invite)));
       })))));
@@ -1647,10 +1749,36 @@ function notifyCard(b) {
     save, test);
 }
 
+/* и за включване, и за изключване са нужни паролата и код от имейла */
+function twofaCard(status, me, reload) {
+  const on = status.on;
+  const form = h('form', null, h('div', { class: 'stack' },
+    h('input', { class: 'hidden-field', type: 'text', value: me.username, autocomplete: 'username', tabindex: '-1', 'aria-hidden': 'true' }),
+    fieldEl({ k: 'current', label: 'Текуща парола', type: 'password', req: true, autocomplete: 'current-password' })),
+  h('button', { class: 'btn block ' + (on ? '' : 'primary'), type: 'submit' }, on ? 'Изключи: изпрати код' : 'Включи: изпрати код'));
+  const card = h('div', { class: 'card stack' }, h('div', { class: 'head' }, h('h2', null, 'Двуфакторен вход'), h('span', { class: 'pill ' + (on ? 'ok' : '') }, on ? 'Включен' : 'Изключен')),
+    h('p', { class: 'small muted' }, 'При вход след паролата въвеждате и 8-цифрен код, изпратен на ', h('b', null, status.email), '. Кодът важи 2 минути. Адреса променя администраторът.'), form);
+  submitter(form, async d => {
+    const r = await api('twofa.start', { current: await preHash(me.no, me.username, d.current), on: !on });
+    let confirmBtn;
+    const expired = h('p', { class: 'small warnbox', hidden: true }, 'Кодът изтече. Започнете отначало.');
+    const step = h('form', null, h('p', { class: 'small muted' }, 'Кодът важи още ', countdown(r.validFor, () => { expired.hidden = false; confirmBtn.disabled = true; }), ' мин.'), h('div', { class: 'stack' }, codeField()), expired,
+      confirmBtn = h('button', { class: 'btn primary block', type: 'submit' }, 'Потвърди'));
+    submitter(step, async s => {
+      const done = await api('twofa.confirm', { challenge: r.challenge, code: s.code.trim() });
+      toast(done.on ? 'Двуфакторният вход е включен.' : 'Двуфакторният вход е изключен.');
+      reload();
+    });
+    form.replaceWith(step);
+  });
+  return card;
+}
+
 async function viewMe() {
   const me = session.me;
   let b = null;
   if (!me.operator) { Store.boot = null; b = await boot(); }
+  const status = await api('twofa.status');
   const form = h('form', { class: 'card' }, h('h2', null, 'Смяна на парола'), h('br'), h('div', { class: 'stack' },
     h('input', { class: 'hidden-field', type: 'text', value: me.username, autocomplete: 'username', tabindex: '-1', 'aria-hidden': 'true' }),
     fieldEl({ k: 'current', label: 'Текуща парола', type: 'password', req: true, autocomplete: 'current-password' }),
@@ -1664,7 +1792,7 @@ async function viewMe() {
     toast('Паролата е сменена.');
   });
   setView(h('div', { class: 'head' }, h('h1', null, 'Моят профил')),
-    h('div', { class: 'split' }, h('div', { class: 'stack' }, form, b ? notifyCard(b) : null), h('div', { class: 'card' }, h('dl', { class: 'kv' },
+    h('div', { class: 'split' }, h('div', { class: 'stack' }, form, twofaCard(status, me, () => viewMe().catch(showError)), b ? notifyCard(b) : null), h('div', { class: 'card' }, h('dl', { class: 'kv' },
       h('dt', null, 'Име'), h('dd', null, me.name), h('dt', null, 'Потребител'), h('dd', { class: 'mono' }, me.username),
       h('dt', null, 'Роля'), h('dd', null, me.role), h('dt', null, 'Организация'), h('dd', null, me.org), h('dt', null, 'Номер'), h('dd', { class: 'mono' }, me.no)))));
 }
@@ -1776,7 +1904,7 @@ async function viewOpOrg(no) {
         }));
         return h('tr', null, h('td', { class: 'mono' }, u.username), h('td', null, u.name), h('td', null, u.role),
           h('td', { class: 'small' }, u.perms.length === Docs.defaultPerms(u.role).length && Docs.defaultPerms(u.role).every(k => u.perms.includes(k)) ? 'по подразбиране' : Docs.PERMS.filter(p => u.perms.includes(p[0])).map(p => p[1]).join('; ') || 'без права'),
-          h('td', null, u.active !== 'Да' ? h('span', { class: 'pill bad' }, 'Спрян') : u.pending ? h('span', { class: 'pill warn' }, 'Чака парола') : h('span', { class: 'pill ok' }, 'Активен')),
+          h('td', null, u.active !== 'Да' ? h('span', { class: 'pill bad' }, 'Спрян') : u.pending ? h('span', { class: 'pill warn' }, 'Чака парола') : h('span', { class: 'pill ok' }, 'Активен'), u.twofa === 'Да' ? h('div', { class: 'small muted' }, 'Вход с код') : null),
           h('td', { class: 'mono small' }, fmtTime(u.lastLogin)),
           h('td', { class: 'right' }, h('div', { class: 'actions' }, h('button', { class: 'btn sm', onclick: () => userDialog(u, d => api('op.user.save', Object.assign(d, { no })), reload) }, 'Промени'), gen)));
       }))));

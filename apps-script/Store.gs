@@ -3,14 +3,14 @@
 const SCHEMA = {
   apps: ['Заявки за регистрация', { id: '№', at: 'Подадена', status: 'Статус', name: 'Организация', eik: 'ЕИК/БУЛСТАТ', type: 'Вид', email: 'Официален имейл', payload: 'Данни (JSON)', reason: 'Причина за отказ', decidedBy: 'Решил', decidedAt: 'Дата на решение', orgNo: 'Номер на организация', salt: 'Сол', hash: 'Хеш' }],
   orgs: ['Организации', { no: 'Номер', name: 'Наименование', eik: 'ЕИК/БУЛСТАТ', type: 'Вид', status: 'Статус', sheetId: 'ID на таблицата', approvedAt: 'Одобрена', approvedBy: 'Одобрил', adminUser: 'Първи администратор', plan: 'План' }],
-  ops: ['Оператори', { username: 'Потребител', name: 'Име', email: 'Имейл', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден' }],
+  ops: ['Оператори', { username: 'Потребител', name: 'Име', email: 'Имейл', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден', twofa: 'Двуфакторен вход' }],
   changes: ['Заявки за промяна', { id: '№', at: 'Подадена', no: 'Номер на организация', orgName: 'Организация', by: 'Подал', status: 'Статус', basis: 'Основание', changed: 'Промени (JSON)', reason: 'Причина за отказ', decidedBy: 'Решил', decidedAt: 'Дата на решение' }],
   plans: ['Планове', { id: 'ID', name: 'Наименование', description: 'Описание', status: 'Състояние', by: 'Въвел', at: 'Въведен' }],
   logins: ['Входове', { at: 'Време', username: 'Потребител', ip: 'IP адрес', agent: 'Браузър', result: 'Резултат' }],
   log: ['Дневник', { at: 'Време', actor: 'Потребител', action: 'Действие', ref: 'Обект', details: 'Подробности' }],
 
   profile: ['Профил', { key: 'Ключ', value: 'Стойност' }],
-  users: ['Потребители', { username: 'Потребител', name: 'Име', position: 'Длъжност', email: 'Имейл', phone: 'Телефон', role: 'Роля', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден', createdBy: 'Създал', mustChange: 'Да смени паролата', perms: 'Права (JSON)', notify: 'Известия (JSON)' }],
+  users: ['Потребители', { username: 'Потребител', name: 'Име', position: 'Длъжност', email: 'Имейл', phone: 'Телефон', role: 'Роля', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден', createdBy: 'Създал', mustChange: 'Да смени паролата', perms: 'Права (JSON)', notify: 'Известия (JSON)', twofa: 'Двуфакторен вход' }],
   cases: ['Преписки', {
     regNo: 'Рег. №', createdAt: 'Въведена', createdBy: 'Въвел', kind: 'Вид заявление', regDate: 'Дата на регистриране', channel: 'Начин на подаване',
     applicantType: 'Вид заявител', applicantName: 'Заявител', applicantSeat: 'Седалище', applicantAddress: 'Адрес за кореспонденция', applicantEmail: 'Имейл', applicantPhone: 'Телефон',

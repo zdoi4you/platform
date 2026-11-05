@@ -1596,3 +1596,180 @@ test('reminders wait for the morning and skip closed cases', () => {
   g.ctx.remindDeadlines();
   assert.equal(mine().length, 0, 'приключената преписка няма срок');
 });
+
+/* ---------- двуфакторен вход ---------- */
+const lastCode = (g, to) => { const m = g.mails.filter(x => x.to === to && /код за потвърждение/.test(x.subject)).at(-1); assert.ok(m, 'няма писмо с код'); return /Код: (\d{8})/.exec(m.body)[1]; };
+const twofaOn = (g, token, hash, to) => {
+  const s = g.call('twofa.start', { current: hash, on: true }, token);
+  assert.equal(s.ok, true, JSON.stringify(s));
+  const r = g.call('twofa.confirm', { challenge: s.challenge, code: lastCode(g, to) }, token);
+  assert.equal(r.on, true, JSON.stringify(r));
+};
+const wrongCode = code => (code === '00000000' ? '11111111' : '00000000');
+
+test('without two-factor login works as before; with it the password alone opens no session', () => {
+  const { g, a } = setupTeam();
+  const creds = { no: a.no, username: 'mpetrova', hash: HASH('p') };
+  assert.ok(g.call('login', creds).token);
+  twofaOn(g, a.token, HASH('p'), 'admin@example.org');
+  const first = g.call('login', creds);
+  assert.equal(first.twoFactor, true);
+  assert.equal(first.validFor, 120);
+  assert.equal(first.token, undefined);
+  assert.equal(first.me, undefined);
+  const code = lastCode(g, 'admin@example.org');
+  assert.match(code, /^\d{8}$/);
+  const done = g.call('login.code', { challenge: first.challenge, code });
+  assert.ok(done.token, JSON.stringify(done));
+  assert.equal(done.me.username, 'mpetrova');
+  assert.equal(g.call('case.list', {}, done.token).ok, true);
+  assert.equal(g.call('login.code', { challenge: first.challenge, code }).error, 'code', 'кодът се използва веднъж');
+});
+
+test('the code expires after 2 minutes and is not stored in the clear', () => {
+  const { g, a } = setupTeam();
+  twofaOn(g, a.token, HASH('p'), 'admin@example.org');
+  const r = g.call('login', { no: a.no, username: 'mpetrova', hash: HASH('p') });
+  const code = lastCode(g, 'admin@example.org');
+  g.advance(121000);
+  assert.equal(g.call('login.code', { challenge: r.challenge, code }).error, 'code');
+  const again = g.call('login', { no: a.no, username: 'mpetrova', hash: HASH('p') });
+  const fresh = lastCode(g, 'admin@example.org');
+  g.advance(119000);
+  assert.ok(g.call('login.code', { challenge: again.challenge, code: fresh }).token, 'важи до края на двете минути');
+  const book = [...g.books.values()].flatMap(b => b.getSheets()).map(s => JSON.stringify(s.cells)).join('');
+  assert.ok(!book.includes(fresh), 'кодът не е записан в таблиците');
+});
+
+test('wrong codes count toward the login limit and lock the account', () => {
+  const { g, a } = setupTeam();
+  twofaOn(g, a.token, HASH('p'), 'admin@example.org');
+  const creds = { no: a.no, username: 'mpetrova', hash: HASH('p') };
+  const r = g.call('login', creds), code = lastCode(g, 'admin@example.org');
+  for (let left = 4; left >= 1; left--) {
+    const bad = g.call('login.code', { challenge: r.challenge, code: wrongCode(code) });
+    assert.equal(bad.error, 'code');
+    assert.ok(bad.message.includes('Остават ' + left) , bad.message);
+  }
+  assert.equal(g.call('login.code', { challenge: r.challenge, code: wrongCode(code) }).error, 'locked');
+  assert.equal(g.call('login.code', { challenge: r.challenge, code }).error, 'code', 'след заключване и верният код не важи');
+  assert.equal(g.call('login', creds).error, 'locked', 'и верната парола не минава');
+  assert.ok(g.mails.some(m => /спрян вход/.test(m.subject)));
+});
+
+test('a code fits only its own login attempt', () => {
+  const { g, a } = setupTeam();
+  twofaOn(g, a.token, HASH('p'), 'admin@example.org');
+  const creds = { no: a.no, username: 'mpetrova', hash: HASH('p') };
+  const one = g.call('login', creds), first = lastCode(g, 'admin@example.org');
+  const two = g.call('login', creds), second = lastCode(g, 'admin@example.org');
+  if (first !== second) assert.equal(g.call('login.code', { challenge: two.challenge, code: first }).error, 'code');
+  assert.ok(g.call('login.code', { challenge: one.challenge, code: first }).token);
+});
+
+test('codes are limited per account, and a failed mail gives no way in', () => {
+  const { g, a } = setupTeam();
+  twofaOn(g, a.token, HASH('p'), 'admin@example.org');
+  g.advance(901000);
+  const creds = { no: a.no, username: 'mpetrova', hash: HASH('p') };
+  for (let i = 0; i < 5; i++) assert.equal(g.call('login', creds).twoFactor, true);
+  assert.equal(g.call('login', creds).error, 'locked');
+  g.advance(901000);
+  g.ctx.MailApp.sendEmail = () => { throw new Error('quota'); };
+  const r = g.call('login', creds);
+  assert.equal(r.error, 'mail');
+  assert.equal(r.challenge, undefined);
+});
+
+test('turning it on and off needs the password and a code; a password reset does not bypass it', () => {
+  const { g, a } = setupTeam();
+  assert.equal(g.call('twofa.status', {}, a.token).on, false);
+  assert.equal(g.call('twofa.start', { current: HASH('x'), on: true }, a.token).error, 'password');
+  const s = g.call('twofa.start', { current: HASH('p'), on: true }, a.token);
+  assert.equal(g.call('twofa.confirm', { challenge: s.challenge, code: wrongCode(lastCode(g, 'admin@example.org')) }, a.token).error, 'code');
+  assert.equal(g.call('twofa.status', {}, a.token).on, false);
+  assert.equal(g.call('twofa.confirm', { challenge: s.challenge, code: lastCode(g, 'admin@example.org') }, a.token).on, true);
+  assert.equal(g.call('twofa.status', {}, a.token).on, true);
+  assert.equal(g.call('twofa.start', { current: HASH('p'), on: true }, a.token).error, 'state');
+  assert.ok(g.mails.some(m => /двуфакторен вход/.test(m.subject) && m.body.includes('включен')));
+
+  // код за вход не става за изключване, а чужд код не важи за друг потребител
+  const creds = { no: a.no, username: 'mpetrova', hash: HASH('p') };
+  const lg = g.call('login', creds);
+  assert.equal(g.call('twofa.confirm', { challenge: lg.challenge, code: lastCode(g, 'admin@example.org') }, a.token).error, 'code');
+  const emp = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
+  const off = g.call('twofa.start', { current: HASH('p'), on: false }, a.token);
+  assert.equal(g.call('twofa.confirm', { challenge: off.challenge, code: lastCode(g, 'admin@example.org') }, emp).error, 'code');
+
+  // новата парола през връзка от имейл също иска код при вход
+  g.call('forgot', { no: a.no, username: 'mpetrova' });
+  const link = mailed(g, 'admin@example.org');
+  assert.equal(g.call('activate', { no: a.no, username: 'mpetrova', token: link[3], hash: HASH('n') }).ok, true);
+  assert.equal(g.call('login', { no: a.no, username: 'mpetrova', hash: HASH('n') }).twoFactor, true);
+  assert.equal(g.call('login.code', { challenge: lg.challenge, code: '12345678' }).error, 'code', 'старият код отпада със смяната на паролата');
+});
+
+test('operators can use it too, and changing the address warns the old one', () => {
+  const { g, op, a } = setupTeam();
+  twofaOn(g, op, HASH('o'), 'owner@example.org');
+  const r = g.call('login', { no: '00000000', username: 'admin', hash: HASH('o') });
+  assert.equal(r.twoFactor, true);
+  const done = g.call('login.code', { challenge: r.challenge, code: lastCode(g, 'owner@example.org') });
+  assert.equal(done.me.operator, true);
+
+  const emp = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
+  twofaOn(g, emp, HASH('e'), 'emp@example.org');
+  g.mails.length = 0;
+  assert.equal(g.call('users.save', { username: 'emp1', name: 'Служител', position: 'Експерт', email: 'new@example.org', role: 'Служител' }, a.token).ok, true);
+  assert.ok(g.mails.some(m => m.to === 'emp@example.org' && /променен имейл/.test(m.subject)));
+  assert.equal(g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).twoFactor, true);
+  assert.ok(g.mails.some(m => m.to === 'new@example.org' && /код за потвърждение/.test(m.subject)));
+  assert.equal(g.call('users.list', {}, a.token).users.find(u => u.username === 'emp1').twofa, 'Да');
+});
+
+/* ---------- разходи и данни за плащане ---------- */
+const grantFields = over => Object.assign({ scope: 'пълен', accessDays: '30', place: 'м', accessForm: 'копия на материален носител', costs: 'подадено от браузъра', court: 'Административен съд София-град' }, over);
+
+test('costs follow the published norms, in lev and converted once to euro; the browser cannot set the sum', () => {
+  const { g, a } = setupTeam();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const r = g.call('doc.create', { type: 'grant', regNo: reg, title: 'x', date: '2026-11-05', fields: grantFields({ costItems: JSON.stringify({ a4: 100, tonerA4: 100, cd: 1 }), costTotal: '0,01' }) }, a.token);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const f = r.payload.f;
+  // 100 × 0,01 + 100 × 0,02 + 0,26 = 3,26 лв.; 3,26 / 1,95583 = 1,67 евро
+  assert.equal(f.costTotal, '1,67');
+  assert.ok(f.costs.includes('Общо 3,26 лв., равни на 1,67 евро') && f.costs.includes('Наредба № Н-1'), f.costs);
+  assert.ok(!f.costs.includes('подадено'));
+});
+
+test('no quantities mean no costs; bad quantities and costs for an electronic form are refused', () => {
+  const { g, a } = setupTeam();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const make = over => g.call('doc.create', { type: 'grant', regNo: reg, title: 'x', date: '2026-11-05', fields: grantFields(over) }, a.token);
+  const none = make({ costItems: '{}' });
+  assert.equal(none.payload.f.costs, 'Няма дължими разходи.');
+  assert.equal(none.payload.f.costTotal, undefined);
+  for (const bad of ['{"a4":-1}', '{"a4":1.5}', '{"hack":1}', '[1]', 'x', '{"a4":100001}']) assert.equal(make({ costItems: bad }).error, 'value', bad);
+  assert.equal(make({ costItems: '{"a4":1}', accessForm: 'копия, предоставени по електронен път, или интернет адрес, където се съхраняват или са публикувани данните' }).error, 'costs');
+  assert.equal(make({ costs: 'свободен текст' }).payload.f.costs, 'свободен текст', 'стари заявки без количества');
+});
+
+test('payment data is optional, validated and changes only through a request', () => {
+  const g = load(), op = operator(g);
+  assert.equal(apply(g, { payIban: 'BG80BNBG96611020345679' }).error, 'iban');
+  assert.equal(apply(g, { payBic: 'x' }).error, 'bic');
+  assert.equal(apply(g, { payCode: '12' }).error, 'value');
+  const a = approve(g, op);
+  assert.equal(g.call('org.bootstrap', {}, a.token).profile.payIban, undefined);
+  const prof = g.call('org.bootstrap', {}, a.token).profile;
+  const req = g.call('org.changeRequest', Object.assign({}, prof, { payIban: 'bg80 bnbg 9661 1020 3456 78', payBic: 'bnbgbgsd', payBank: 'БНБ', changeBasis: 'заповед' }), a.token);
+  assert.equal(req.ok, true, JSON.stringify(req));
+  assert.equal(g.call('org.bootstrap', {}, a.token).profile.payIban, undefined, 'до одобрението няма промяна');
+  assert.equal(g.call('op.changeDecide', { id: req.id, approve: true }, op).ok, true);
+  const after = g.call('org.bootstrap', {}, a.token).profile;
+  assert.equal(after.payIban, 'BG80BNBG96611020345678');
+  assert.equal(after.payBic, 'BNBGBGSD');
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const r = g.call('doc.create', { type: 'grant', regNo: reg, title: 'x', date: '2026-11-05', fields: grantFields({ costItems: '{"a4":10}' }) }, a.token);
+  assert.equal(r.payload.org.payIban, 'BG80BNBG96611020345678', 'данните се пазят с решението');
+});

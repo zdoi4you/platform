@@ -8,6 +8,27 @@ const ORG_FIELDS = {
   phone: 40, email: 200, web: 200, headName: 120, headPosition: 120,
   unitName: 200, unitAddress: 300, unitEmail: 200, unitPhone: 40, unitHours: 200
 };
+/* данни за плащане на разходите по ЗДОИ; не са задължителни, защото не всяка организация събира разходи */
+const ORG_PAYMENT = { payIban: 34, payBic: 11, payBank: 120, payCode: 6, payCash: 300 };
+
+function validIban_(v) {
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(v) || (v.slice(0, 2) === 'BG' && v.length !== 22)) return false;
+  let rest = 0;
+  (v.slice(4) + v.slice(0, 4)).split('').forEach(ch => {
+    String(parseInt(ch, 36)).split('').forEach(digit => { rest = (rest * 10 + Number(digit)) % 97; });
+  });
+  return rest === 1;
+}
+
+function cleanPayment_(d, o) {
+  const code = s => str_(s, 50).replace(/\s+/g, '').toUpperCase();
+  o.payIban = code(d.payIban); o.payBic = code(d.payBic); o.payCode = str_(d.payCode, 6);
+  o.payBank = line_(d.payBank, ORG_PAYMENT.payBank); o.payCash = line_(d.payCash, ORG_PAYMENT.payCash);
+  if (o.payIban && !validIban_(o.payIban)) fail_('iban', 'Невалиден IBAN.');
+  if (o.payBic && !/^[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?$/.test(o.payBic)) fail_('bic', 'Невалиден BIC код на банката.');
+  if (o.payCode && !/^\d{6}$/.test(o.payCode)) fail_('value', 'Кодът за вид плащане е от 6 цифри.');
+}
+
 const ADMIN_FIELDS = { adminName: 120, adminPosition: 120, adminEmail: 200, adminPhone: 40, adminUsername: 40 };
 
 function cleanOrg_(d) {
@@ -23,6 +44,7 @@ function cleanOrg_(d) {
   if (!isEmail_(o.email)) fail_('email', 'Невалиден официален имейл.');
   if (!isEmail_(o.unitEmail)) fail_('email', 'Невалиден имейл на звеното за достъп.');
   if (!/^https?:\/\/[^\s]+\.[^\s]+$/i.test(o.web)) fail_('web', 'Интернет страницата трябва да започва с https://');
+  cleanPayment_(d, o);
   return o;
 }
 
@@ -61,6 +83,7 @@ function createOrg_(m, data, no, access, actor, ref) {
   ORG_TABLES.forEach(k => table_(book, k));
   dropDefaultSheet_(book);
   Object.keys(ORG_FIELDS).forEach(k => insert_(book, 'profile', { key: k, value: data[k] }));
+  Object.keys(ORG_PAYMENT).forEach(k => { if (data[k]) insert_(book, 'profile', { key: k, value: data[k] }); });
   insert_(book, 'users', {
     username: data.adminUsername, name: data.adminName, position: data.adminPosition, email: data.adminEmail, phone: data.adminPhone,
     role: ROLE_ADMIN, active: 'Да', salt: access.salt || '', hash: access.hash || '', inviteHash: access.inviteHash || '', inviteExp: access.inviteExp || '', createdAt: stamp_(), createdBy: actor
@@ -473,7 +496,7 @@ function orgChangeRequest_(d, ctx) {
   if (!basis) fail_('required', 'Посочете основанието за промяната.');
   if (read_(m, 'changes').some(x => x.no === ctx.no && x.status === PENDING_)) fail_('pending', 'Вече има заявка за промяна, която чака решение.');
   const changed = {};
-  Object.keys(ORG_FIELDS).forEach(k => { if (next[k] !== (cur[k] || '')) changed[k] = { from: cur[k] || '', to: next[k] }; });
+  Object.keys(ORG_FIELDS).concat(Object.keys(ORG_PAYMENT)).forEach(k => { if (next[k] !== (cur[k] || '')) changed[k] = { from: cur[k] || '', to: next[k] }; });
   if (!Object.keys(changed).length) fail_('nochange', 'Няма променени данни.');
   const id = 'П-' + todayIso_().slice(0, 4) + '-' + String(nextCounter_(m, 'changes')).padStart(4, '0');
   insert_(m, 'changes', { id: id, at: stamp_(), no: ctx.no, orgName: cur.name, by: ctx.username, status: PENDING_, basis: basis, changed: JSON.stringify(changed) });
@@ -608,6 +631,8 @@ function usersSave_(d, ctx) {
     v.perms = same ? '' : JSON.stringify(d.perms);
   } else if (cur && cur.role !== v.role) v.perms = '';
   if (cur) {
+    // кодовете за вход ще тръгнат към новия адрес, затова старият адрес научава за промяната
+    if (cur.twofa === 'Да' && cur.email && cur.email !== v.email) mail_(cur.email, 'ЗДОИ4You Платформа – променен имейл', 'Имейлът на потребител ' + username + ' е променен от администратор. Кодовете за вход вече отиват на новия адрес.\n\nАко не очаквате тази промяна, пишете на ' + CFG.SUPPORT + '.');
     const stillAdmin = users.some(u => u.username !== username && u.role === ROLE_ADMIN && u.active === 'Да') || (v.role === ROLE_ADMIN && v.active === 'Да');
     if (!stillAdmin) fail_('lastadmin', 'Организацията трябва да има поне един активен администратор.');
     patch_(ss, 'users', cur._row, v);

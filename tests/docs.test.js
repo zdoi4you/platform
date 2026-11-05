@@ -244,3 +244,24 @@ test('dossier contains the case data, history, files with checksums and the full
   const empty = flatten(Docs.dossierDefinition(Object.assign({}, data, { docs: [], events: [], courts: [], files: [] }), 'x', {}).content);
   assert.ok(empty.includes('Няма.') && !/undefined/.test(empty));
 });
+
+test('the browser and the server use the same cost norms and the same sum', () => {
+  const g = load();
+  assert.deepEqual(JSON.parse(JSON.stringify(g.t.COST_NORMS)), JSON.parse(JSON.stringify(Docs.COST_NORMS)));
+  for (const items of [{}, { a4: 1 }, { a4: 100, tonerA4: 100 }, { a3: 7, tonerA3: 14, cd: 2, dvd47: 1, dvd85: 3, usb4: 1, usb8: 1, usb16: 1, usb32: 2 }]) {
+    assert.deepEqual(JSON.parse(JSON.stringify(g.ctx.costsOf_(items))), Docs.costsOf(items));
+  }
+});
+
+test('the published norms are exact (Наредба № Н-1, ДВ, бр. 22 от 2022 г.)', () => {
+  const prices = Object.fromEntries(Object.entries(Docs.COST_NORMS).map(([k, n]) => [k, n[2]]));
+  assert.deepEqual(prices, { a4: 1, a3: 2, tonerA4: 2, tonerA3: 4, cd: 26, dvd47: 30, dvd85: 67, usb4: 346, usb8: 572, usb16: 793, usb32: 947 });
+});
+
+test('a decision with costs names the sum and the payment data; without them it says nothing about payment', () => {
+  const paid = { type: 'grant', no: 'РЕШ-1', date: '2026-11-05', case: kase, org: Object.assign({}, org, { payIban: 'BG80BNBG96611020345678', payBic: 'BNBGBGSD', payBank: 'БНБ', payCode: '448090', payCash: 'на касата' }), f: Object.assign({}, fields, { costs: 'Общо', costTotal: '1,67', accessDays: '30' }) };
+  const text = flatten(Docs.pdfDefinition(paid, 'data:image/png;base64,AA==').content);
+  for (const t of ['1,67 евро', 'BG80BNBG96611020345678', 'BNBGBGSD', 'БНБ', '448090', 'на касата', 'решение № РЕШ-1']) assert.ok(text.includes(t), t);
+  const free = flatten(Docs.pdfDefinition(Object.assign({}, paid, { f: Object.assign({}, paid.f, { costTotal: undefined }) }), 'data:image/png;base64,AA==').content);
+  assert.ok(!free.includes('BG80BNBG96611020345678'), 'без разходи няма банкови данни');
+});

@@ -113,14 +113,24 @@ function login_(d) {
     if (acc) recordLogin_(acc.ss, u ? username : '(непознат)', ip, agent, !u ? 'Непознат потребител' : u.active === 'Да' ? 'Грешна парола' : 'Спрян потребител');
     if (u) audit_(acc.ss, username, 'Неуспешен вход', '', ip);
     if (count >= CFG.MAX_FAILS) {
-      if (acc) recordLogin_(acc.ss, u ? username : '(непознат)', ip, agent, 'Заключен за 15 минути');
-      if (u && u.email) mail_(u.email, 'ЗДОИ4You Платформа – спрян вход', 'Входът за потребител ' + username + ' е спрян за 15 минути след ' + count + ' неуспешни опита' + (ip ? ' (последен IP адрес: ' + ip + ')' : '') + '.\n\nАко не сте опитвали вие, сменете паролата си след отпадане на ограничението и уведомете администратора.');
+      lockNotice_(acc, u, count, ip, agent);
       fail_('locked', LOCKED_MSG_);
     }
     badLogin_(CFG.MAX_FAILS - count);
   }
+  // при двуфакторен вход неуспешните опити се нулират едва след верния код
+  if (u.twofa === 'Да') return startLoginCode_(acc, no, u, ip, agent);
   t.clear();
-  const at = stamp_();
+  return openSession_(acc, no, u, ip, agent);
+}
+
+function lockNotice_(acc, u, count, ip, agent) {
+  if (acc) recordLogin_(acc.ss, u ? u.username : '(непознат)', ip, agent, 'Заключен за 15 минути');
+  if (u && u.email) mail_(u.email, 'ЗДОИ4You Платформа – спрян вход', 'Входът за потребител ' + u.username + ' е спрян за 15 минути след ' + count + ' неуспешни опита' + (ip ? ' (последен IP адрес: ' + ip + ')' : '') + '.\n\nАко не сте опитвали вие, сменете паролата си след отпадане на ограничението и уведомете администратора.');
+}
+
+function openSession_(acc, no, u, ip, agent) {
+  const username = u.username, at = stamp_();
   patch_(acc.ss, acc.key, u._row, { lastLogin: at });
   recordLogin_(acc.ss, username, ip, agent, 'Успешен');
   audit_(acc.ss, username, 'Вход', '', ip);

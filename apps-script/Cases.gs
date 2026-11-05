@@ -201,6 +201,52 @@ const DOC_TYPES = {
   art15: { cls: 'ЧЛ15', noCase: true, need: [], apply: null }
 };
 
+/*
+ * Разходи: Наредба № Н-1 от 7 март 2022 г. (ДВ, бр. 22 от 2022 г.), издадена на основание чл. 20, ал. 2 ЗДОИ. Нормативите са в стотинки,
+ * както са обнародвани. Сборът се превръща в евро по фиксирания курс и се закръгля веднъж: при закръгляне на всяка единична цена
+ * 1 лист би струвал 2 пъти повече. Същата таблица и сметка има в site/js/docs.js и тест проверява, че съвпадат.
+ */
+const COST_NORMS = {
+  a4: ['Хартия А4', 'лист', 1], a3: ['Хартия А3', 'лист', 2], tonerA4: ['Тонер за едностранно отпечатване А4', 'стр.', 2], tonerA3: ['Тонер за едностранно отпечатване А3', 'стр.', 4],
+  cd: ['CD диск 700 MB', 'бр.', 26], dvd47: ['DVD диск 4,7 GB', 'бр.', 30], dvd85: ['DVD диск 8,5 GB', 'бр.', 67],
+  usb4: ['USB флаш памет 4 GB', 'бр.', 346], usb8: ['USB флаш памет 8 GB', 'бр.', 572], usb16: ['USB флаш памет 16 GB', 'бр.', 793], usb32: ['USB флаш памет 32 GB', 'бр.', 947]
+};
+const LEV_PER_EUR_ = 1.95583;
+const NO_COST_FORM_ = /електронен път|платформата|устна справка/;
+const money_ = n => n.toFixed(2).replace('.', ',');
+
+function costsOf_(items) {
+  let sum = 0;
+  const lines = Object.keys(COST_NORMS).filter(k => Number(items[k]) > 0).map(k => {
+    const n = COST_NORMS[k], qty = Number(items[k]), line = qty * n[2];
+    sum += line;
+    return n[0] + ': ' + qty + ' ' + n[1] + ' × ' + money_(n[2] / 100) + ' лв. = ' + money_(line / 100) + ' лв.';
+  });
+  if (!sum) return { text: 'Няма дължими разходи.', total: '' };
+  const total = money_(Math.round(sum / LEV_PER_EUR_) / 100);
+  return { text: lines.join('; ') + ' Общо ' + money_(sum / 100) + ' лв., равни на ' + total + ' евро по фиксирания курс 1 евро = 1,95583 лв. (Наредба № Н-1 от 7 март 2022 г.).', total: total };
+}
+
+/* сумата се изчислява на сървъра; подадените от браузъра текст и сума се пренебрегват */
+function applyCosts_(f) {
+  delete f.costTotal;
+  if (!f.costItems) return;
+  let raw;
+  try { raw = JSON.parse(f.costItems); } catch (_) { fail_('value', 'Невалидни разходи.'); }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail_('value', 'Невалидни разходи.');
+  const items = {};
+  Object.keys(raw).forEach(k => {
+    const qty = Number(raw[k]);
+    if (!Object.prototype.hasOwnProperty.call(COST_NORMS, k) || !Number.isInteger(qty) || qty < 0 || qty > 100000) fail_('value', 'Невалидно количество в разходите.');
+    if (qty) items[k] = qty;
+  });
+  const r = costsOf_(items);
+  if (r.total && NO_COST_FORM_.test(f.accessForm || '')) fail_('costs', 'При избраната форма на достъп няма разходи за материални носители.');
+  f.costItems = JSON.stringify(items);
+  f.costs = r.text;
+  if (r.total) f.costTotal = r.total;
+}
+
 /* компетентният съд се определя по адреса на адресата */
 function courtForOblast_(oblast) {
   if (oblast === 'София (столица)') return 'Административен съд София-град';
@@ -263,6 +309,9 @@ function docCreate_(d, ctx) {
     if (!f.court && c && oblastOfCase_(c)) f.court = courtForOblast_(oblastOfCase_(c));
     if (f.court && OBLASTS_.map(courtForOblast_).indexOf(f.court) < 0) fail_('court', 'Изберете административен съд от списъка.');
     if (!f.court) fail_('court', 'Посочете компетентния административен съд според адреса на адресата.');
+    applyCosts_(f);
+  } else {
+    delete f.costItems; delete f.costTotal;
   }
   def.need.forEach(k => { if (!f[k]) fail_('required', 'Попълнете всички задължителни полета.'); });
   if (f.signMode && ['electronic'].indexOf(f.signMode) < 0) fail_('value', 'Невалиден начин на подписване.');
