@@ -212,7 +212,7 @@ function regOrg_(raw) {
 const opActor_ = ctx => 'оператор ' + ctx.username;
 
 function usersPublic_(ss) {
-  return publicRows_(read_(ss, 'users')).map(u => { const o = Object.assign({}, u); o.pending = !!u.inviteExp; delete o.inviteExp; delete o.notify; o.perms = Object.keys(permsOf_(u)); return o; });
+  return publicRows_(read_(ss, 'users')).map(u => { const o = Object.assign({}, u); o.pending = !!u.inviteExp; delete o.inviteExp; delete o.notify; delete o.noticeSeen; o.perms = Object.keys(permsOf_(u)); return o; });
 }
 
 function opOrgGet_(d, ctx) {
@@ -593,7 +593,8 @@ function opLogins_(d) {
 function profile_(ss) {
   const p = {};
   // съдът вече не е данни на организацията: определя се за всяко решение по адреса на заявителя
-  read_(ss, 'profile').forEach(r => { if (r.key !== 'court') p[r.key] = r.value; });
+  // настройките не са данни на организацията и не влизат в документите
+  read_(ss, 'profile').forEach(r => { if (r.key !== 'court' && r.key !== TICKETS_KEY_) p[r.key] = r.value; });
   return p;
 }
 
@@ -603,13 +604,14 @@ function orgBootstrap_(d, ctx) {
   const me = read_(ss, 'users').find(u => u.username === ctx.username);
   return {
     profile: profile_(ss), users: users, signers: signersOf_(ss), grounds: groundsOf_(ss), departments: departmentsOf_(ss), addressees: addresseesOf_(ss, ctx), plan: orgPlan_(ctx.org),
-    me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false, perms: permsOf_(me), email: me.email, notify: notifyOf_(me) },
-    remindersOn: remindersOn_()
+    me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false, perms: permsOf_(me), email: me.email, notify: notifyOf_(me), department: (read_(ss, 'departments').find(x => x.id === me.department) || {}).name || '', noticeSeen: me.noticeSeen },
+    remindersOn: remindersOn_(), notices: statusView_().notices
   };
 }
 
 function usersList_(d, ctx) {
-  return { users: usersPublic_(ctx.ss()) };
+  const ss = ctx.ss();
+  return { users: usersPublic_(ss), departments: departmentsOf_(ss) };
 }
 
 function usersSave_(d, ctx) {
@@ -623,6 +625,11 @@ function usersSave_(d, ctx) {
   if (!v.name || !v.position || !v.email) fail_('required', 'Попълнете име, длъжност и имейл.');
   if (!isEmail_(v.email)) fail_('email', 'Невалиден имейл.');
   const cur = users.find(u => u.username === username);
+  // отделът е от въведените в организацията; вече зададен, но спрян отдел може да остане
+  const deps = read_(ss, 'departments'), dep = d.department === undefined ? (cur ? cur.department : '') : line_(d.department, 24);
+  if (dep && !deps.some(x => x.id === dep && (x.active === 'Да' || (cur && cur.department === dep)))) fail_('department', 'Изберете отдел от списъка.');
+  if (!dep && v.role === ROLE_STAFF && deps.some(x => x.active === 'Да') && (!cur || d.department !== undefined)) fail_('department', 'Изберете отдела на служителя.');
+  v.department = dep;
   if (d.perms !== undefined) {
     if (!Array.isArray(d.perms) || d.perms.some(k => PERMS.indexOf(k) < 0)) fail_('value', 'Невалидни права.');
     // записва се само ако се различава от правата по подразбиране за ролята

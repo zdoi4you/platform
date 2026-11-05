@@ -66,15 +66,22 @@ function checkOwner_(ss, owner, current) {
   return owner;
 }
 
+/* първото определяне е за всеки с право да променя преписки; после отговорника сменя само администратор */
+function ownerGuard_(c, next, ctx) {
+  if (c.owner && next !== c.owner && ctx.role !== ROLE_ADMIN) fail_('role', 'Вече определен отговорник може да промени само администратор.');
+}
+
 function caseAssign_(d, ctx) {
   const ss = ctx.ss(), c = visibleCase_(ss, d.regNo, ctx);
+  unlocked_(c);
   const owner = checkOwner_(ss, line_(d.owner, 40), c.owner);
   if (owner === c.owner) return { owner: owner, visible: true };
+  ownerGuard_(c, owner, ctx);
   patch_(ss, 'cases', c._row, { owner: owner, updatedAt: stamp_() });
   event_(ss, c.regNo, ctx.username, 'Отговорник', owner ? 'Определен отговорник: ' + owner : 'Премахнат е отговорникът.');
   audit_(ss, ctx.username, 'Определен отговорник', c.regNo, owner || 'няма');
   notifyAssigned_(ctx, c.regNo, owner);
-  // служител без право за всички преписки може да предаде своя преписка и да престане да я вижда
+  // потребител без право за всички преписки може да престане да вижда преписка, която е предал
   return { owner: owner, visible: canSee_(Object.assign({}, c, { owner: owner }), ctx) };
 }
 

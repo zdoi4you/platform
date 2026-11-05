@@ -14,7 +14,7 @@
   ];
 
   /*
-   * Наредба № Н-1 от 7 март 2022 г. (ДВ, бр. 22 от 2022 г.), нормативите са в стотинки. Сборът се превръща в евро и се закръгля веднъж.
+   * Наредба № Н-1 от 7 март 2022 г. (ДВ, бр. 22 от 2022 г.), нормативите са в стотинки. Показват се само в евро: всеки се превръща и закръгля надолу до 4-тия знак.
    * Сървърът изчислява същото (apps-script/Cases.gs). В обнародвания текст DVD дисковете са с „MB“, очевидна грешка за GB.
    */
   const COST_NORMS = {
@@ -24,16 +24,18 @@
   };
   const NO_COST_FORM = /електронен път|платформата|устна справка/;
   const money = n => n.toFixed(2).replace('.', ',');
+  const eurUnit = st => Math.floor(st * 100 / 1.95583);
+  const euro = x => (x / 10000).toFixed(4).replace(/(\.\d\d\d*?)0+$/, '$1').replace('.', ',');
   function costsOf(items) {
     let sum = 0;
     const lines = Object.keys(COST_NORMS).filter(k => Number(items[k]) > 0).map(k => {
-      const n = COST_NORMS[k], qty = Number(items[k]), line = qty * n[2];
+      const n = COST_NORMS[k], qty = Number(items[k]), unit = eurUnit(n[2]), line = qty * unit;
       sum += line;
-      return `${n[0]}: ${qty} ${n[1]} × ${money(n[2] / 100)} лв. = ${money(line / 100)} лв.`;
+      return `${n[0]}: ${qty} ${n[1]} × ${euro(unit)} евро = ${euro(line)} евро`;
     });
     if (!sum) return { text: 'Няма дължими разходи.', total: '' };
-    const total = money(Math.round(sum / 1.95583) / 100);
-    return { text: `${lines.join('; ')} Общо ${money(sum / 100)} лв., равни на ${total} евро по фиксирания курс 1 евро = 1,95583 лв. (Наредба № Н-1 от 7 март 2022 г.).`, total };
+    const total = money(Math.round(sum / 100) / 100);
+    return { text: `${lines.join('; ')}. Общо ${total} евро (нормативите по Наредба № Н-1 от 7 март 2022 г., превърнати по фиксирания курс и закръглени надолу).`, total };
   }
 
   /* чл. 15, ал. 1 ЗДОИ; ал. 3 задава кои точки важат за лицата по чл. 3, ал. 2, т. 1 */
@@ -686,7 +688,7 @@
   const STAFF_PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports', 'art15'];
   const defaultPerms = role => (role === 'Администратор' ? PERMS.map(p => p[0]) : STAFF_PERMS);
 
-  const api = { COST_NORMS, NO_COST_FORM, costsOf, dossierDefinition, dossierFileName, signModeField, PERMS, STAFF_PERMS, defaultPerms, orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, GROUNDS, GROUND_SCOPE_LABELS, groundsText, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
+  const api = { COST_NORMS, NO_COST_FORM, costsOf, eurUnit, euro, dossierDefinition, dossierFileName, signModeField, PERMS, STAFF_PERMS, defaultPerms, orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, GROUNDS, GROUND_SCOPE_LABELS, groundsText, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Docs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

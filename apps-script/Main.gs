@@ -41,6 +41,8 @@ function actions_() {
     'login.code': { auth: 'public', write: true, fn: loginCode_ },
     activate: { auth: 'public', write: true, fn: activate_ },
     forgot: { auth: 'public', write: true, fn: forgot_ },
+    'link.check': { auth: 'public', fn: linkCheck_ },
+    'public.status': { auth: 'public', fn: publicStatus_ },
 
     extend: { auth: 'any', fn: extend_ },
     logout: { auth: 'any', fn: logout_ },
@@ -77,6 +79,14 @@ function actions_() {
     'case.update': { auth: 'user', perm: 'casesEdit', write: true, fn: caseUpdate_ },
     'case.comment': { auth: 'user', perm: 'casesEdit', write: true, fn: caseComment_ },
     'case.assign': { auth: 'user', perm: 'casesEdit', write: true, fn: caseAssign_ },
+    'case.lock': { auth: 'user', perm: 'casesEdit', write: true, fn: caseLock_ },
+    'notices.seen': { auth: 'user', write: true, fn: noticesSeen_ },
+    'ticket.list': { auth: 'user', fn: ticketList_ },
+    'ticket.get': { auth: 'user', fn: ticketGet_ },
+    'ticket.create': { auth: 'user', write: true, fn: ticketCreate_ },
+    'ticket.reply': { auth: 'user', write: true, fn: ticketReply_ },
+    'ticket.close': { auth: 'user', write: true, fn: ticketClose_ },
+    'ticket.setting': { auth: 'admin', write: true, fn: ticketSetting_ },
     'notify.save': { auth: 'user', write: true, fn: notifySave_ },
     'notify.test': { auth: 'user', fn: notifyTest_ },
     'case.dossier': { auth: 'user', write: true, fn: caseDossier_ },
@@ -110,7 +120,17 @@ function actions_() {
     'op.user.save': { auth: 'op', write: true, fn: opUserSave_ },
     'op.user.invite': { auth: 'op', write: true, fn: opUserInvite_ },
     'op.logins': { auth: 'op', fn: opLogins_ },
-    'op.log': { auth: 'op', fn: opLog_ }
+    'op.log': { auth: 'op', fn: opLog_ },
+    'op.tickets': { auth: 'op', fn: opTickets_ },
+    'op.ticket.get': { auth: 'op', fn: opTicketGet_ },
+    'op.ticket.reply': { auth: 'op', write: true, fn: opTicketReply_ },
+    'op.system.save': { auth: 'op', write: true, fn: opSystemSave_ },
+    'op.system.delete': { auth: 'op', write: true, fn: opSystemDelete_ },
+    'op.notices': { auth: 'op', fn: opNotices_ },
+    'op.notice.save': { auth: 'op', write: true, fn: opNoticeSave_ },
+    'op.notice.cancel': { auth: 'op', write: true, fn: opNoticeCancel_ },
+    /* без заключване: писмата отнемат време и се изпращат на части */
+    'op.notice.send': { auth: 'op', fn: opNoticeSend_ }
   };
 }
 

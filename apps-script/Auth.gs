@@ -238,6 +238,20 @@ function changePassword_(d, ctx) {
   return {};
 }
 
+/* валидна е само неизползвана и неизтекла връзка */
+const inviteValid_ = (u, token) => !!u && u.active === 'Да' && !!u.inviteHash && Number(u.inviteExp) >= Date.now() && sameText_(sha256_(token), u.inviteHash);
+
+/* при отваряне на връзката: само проверка, която не я изразходва, за да не я затварят скенерите на пощата */
+function linkCheck_(d) {
+  const no = str_(d.no, 8), username = str_(d.username, 40).toLowerCase(), token = str_(d.token, 64);
+  if (!NO_RE_.test(no) || !USER_RE_.test(username) || !/^[0-9a-f]{64}$/.test(token)) return { valid: false };
+  const t = throttle_('linkcheck|' + no + '|' + username, 30);
+  if (t.blocked()) return { valid: false };
+  t.hit();
+  const acc = accountTable_(no);
+  return { valid: inviteValid_(acc ? read_(acc.ss, acc.key).find(x => x.username === username) : null, token) };
+}
+
 function activate_(d) {
   const no = str_(d.no, 8), username = str_(d.username, 40).toLowerCase(), token = str_(d.token, 64), preHash = str_(d.hash, 64);
   const invalid = () => fail_('invite', 'Връзката е невалидна или изтекла. Поискайте нова от администратора.');
@@ -246,7 +260,7 @@ function activate_(d) {
   if (t.blocked()) fail_('locked', 'Твърде много неуспешни опити. Опитайте отново след 15 минути.');
   const acc = accountTable_(no);
   const u = acc ? read_(acc.ss, acc.key).find(x => x.username === username) : null;
-  if (!u || u.active !== 'Да' || !u.inviteHash || Number(u.inviteExp) < Date.now() || !sameText_(sha256_(token), u.inviteHash)) {
+  if (!inviteValid_(u, token)) {
     t.hit();
     invalid();
   }

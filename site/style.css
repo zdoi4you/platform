@@ -268,3 +268,24 @@ dialog .actions { justify-content: flex-end; margin-top: 16px; }
   .gate-card { padding: 20px 16px; }
 }
 .wide-cell { min-width: 240px; }
+
+/* лента със статуса на системите */
+.sysbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 12px; font-size: 13px; font-weight: 500; text-decoration: none; color: var(--ink); background: var(--gray-bg); border-radius: 8px; }
+.top > .sysbar { border-radius: 0; padding-inline: 16px; }
+.gate > .sysbar { margin-bottom: 12px; max-width: 460px; }
+.home-top .sysbar { margin-bottom: 8px; }
+.sysbar.ok { background: var(--ok-bg); color: var(--ok); }
+.sysbar.warn { background: var(--warn-bg); color: var(--warn); }
+.sysbar.bad { background: var(--bad-bg); color: var(--bad); }
+.sysdot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; }
+.sysbar-more { font-weight: 400; }
+.badge { display: inline-block; min-width: 18px; margin-left: 5px; padding: 0 5px; border-radius: 9px; background: var(--bad); color: #fff; font-size: 12px; text-align: center; }
+.msg { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.msg.op { background: var(--soft); }
+
+/* съдържанието зад входа не се печата от браузъра; документите се печатат от PDF */
+@media print {
+  body.noprint > * { display: none !important; }
+  body.noprint::before { content: "Печатът на съдържанието на платформата е забранен. За печат изтеглете PDF на документа."; display: block; padding: 40px; color: #000; background: #fff; font-size: 16px; }
+}
+.third > .pill { align-self: flex-start; }

@@ -36,14 +36,22 @@ const DISMISS_GROUNDS = {
 };
 const GROUNDS = { refuse: REFUSAL, grant: GRANT_GROUNDS, dismiss: DISMISS_GROUNDS, letter: {} };
 
+const APPEAL_DAYS = 14;
+
 /* дължими срокове; изчисляват се само тук, за да има един източник */
 function withDue_(c, today) {
   const o = Object.assign({}, c);
   delete o._row;
   o.due = ''; o.dueLabel = ''; o.daysLeft = null;
   o.thirdInvolved = false; o.thirdBy = ''; o.thirdByDays = null; o.thirdReplyBy = ''; o.thirdReplyDays = null;
-  if (CASE_OPEN.indexOf(c.status) < 0 || !c.regDate) return o;
   const left = iso => Math.round((parseIso_(iso) - parseIso_(today)) / DAY_MS_);
+  // обжалване: 14 дни от съобщаването (чл. 149, ал. 1 АПК), затова без дата на връчване срок не се показва
+  o.appealBy = ''; o.appealDays = null;
+  if (c.decisionNo && c.served) {
+    o.appealBy = term_(c.served, APPEAL_DAYS);
+    o.appealDays = left(o.appealBy);
+  }
+  if (CASE_OPEN.indexOf(c.status) < 0 || !c.regDate) return o;
   const ext30 = Number(c.ext30) || 0, ext31 = Number(c.ext31) || 0, base = c.clarifyGot || c.regDate;
   if (c.clarifyAsked && !c.clarifyGot) {
     o.due = term_(c.clarifyAsked, 30);
@@ -134,6 +142,8 @@ function caseCreate_(d, ctx) {
 
 function caseUpdate_(d, ctx) {
   const ss = ctx.ss(), c = visibleCase_(ss, d.regNo, ctx), v = caseFields_(d);
+  unlocked_(c);
+  if (d.owner !== undefined) ownerGuard_(c, v.owner, ctx);
   // отговорникът се определя отделно (case.assign); липсващото поле не го премахва
   v.owner = d.owner === undefined ? c.owner : checkOwner_(ss, v.owner, c.owner);
   Object.assign(v, {
@@ -143,6 +153,7 @@ function caseUpdate_(d, ctx) {
     served: isoDate_(d.served), servedHow: line_(d.servedHow, 120), published15c: isoDate_(d.published15c),
     appealed: d.appealed === 'Да' ? 'Да' : 'Не', appealNote: str_(d.appealNote, 1000)
   });
+  if (v.served && c.decisionDate && v.served < c.decisionDate) fail_('value', 'Датата на връчване не може да е преди датата на решението.');
   // след получено уточняване срокът тече отново
   if (v.clarifyGot && !c.clarifyGot && v.status === 'Чака уточняване') v.status = 'В обработка';
   if (v.thirdGot && !c.thirdGot && v.status === 'Чака трето лице') v.status = 'В обработка';
@@ -159,6 +170,25 @@ function caseUpdate_(d, ctx) {
   return { regNo: c.regNo };
 }
 
+/* заключената преписка се чете и изтегля, но не се променя, докато не бъде отключена */
+function unlocked_(c) {
+  if (c.locked === 'Да') fail_('caselocked', 'Преписката е заключена от ' + (c.lockedBy || 'администратор') + '. Отключете я, за да я промените.');
+}
+
+/* заключва отговорникът или администратор; отключва който е заключил или администратор */
+function caseLock_(d, ctx) {
+  const ss = ctx.ss(), c = visibleCase_(ss, d.regNo, ctx), want = d.locked === true, admin = ctx.role === ROLE_ADMIN;
+  if (want === (c.locked === 'Да')) return { locked: want };
+  if (want && !admin && c.owner !== ctx.username) fail_('role', 'Преписката се заключва от отговорника или администратор.');
+  if (!want && !admin && c.lockedBy !== ctx.username) fail_('role', 'Преписката се отключва от заключилия я или администратор.');
+  const reason = line_(d.reason, 300);
+  patch_(ss, 'cases', c._row, want ? { locked: 'Да', lockedBy: ctx.username, lockedAt: stamp_(), updatedAt: stamp_() } : { locked: '', lockedBy: '', lockedAt: '', updatedAt: stamp_() });
+  event_(ss, c.regNo, ctx.username, want ? 'Заключване' : 'Отключване', (want ? 'Преписката е заключена.' : 'Преписката е отключена.') + (reason ? ' Причина: ' + reason : ''));
+  audit_(ss, ctx.username, want ? 'Заключена преписка' : 'Отключена преписка', c.regNo, reason);
+  notifyCase_(ctx, c, ['status'], want ? 'Преписката е заключена.' : 'Преписката е отключена.');
+  return { locked: want };
+}
+
 function limitDays_(v, max, label) {
   if (v === '' || v === null || v === undefined) return '';
   const n = Number(v);
@@ -168,6 +198,7 @@ function limitDays_(v, max, label) {
 
 function caseComment_(d, ctx) {
   const ss = ctx.ss(), c = visibleCase_(ss, d.regNo, ctx), text = str_(d.text, 2000);
+  unlocked_(c);
   if (!text) fail_('required', 'Напишете текст.');
   event_(ss, c.regNo, ctx.username, 'Коментар', text);
   notifyCase_(ctx, c, ['comments'], 'Добавен е вътрешен коментар.');
@@ -203,8 +234,9 @@ const DOC_TYPES = {
 
 /*
  * Разходи: Наредба № Н-1 от 7 март 2022 г. (ДВ, бр. 22 от 2022 г.), издадена на основание чл. 20, ал. 2 ЗДОИ. Нормативите са в стотинки,
- * както са обнародвани. Сборът се превръща в евро по фиксирания курс и се закръгля веднъж: при закръгляне на всяка единична цена
- * 1 лист би струвал 2 пъти повече. Същата таблица и сметка има в site/js/docs.js и тест проверява, че съвпадат.
+ * както са обнародвани. Цените се показват и смятат само в евро: всеки норматив се превръща по фиксирания курс и се закръгля надолу
+ * до четвъртия знак, за да не го надвишава и всеки да може да провери сметката в решението. Същата таблица и сметка има
+ * в site/js/docs.js и тест проверява, че съвпадат.
  */
 const COST_NORMS = {
   a4: ['Хартия А4', 'лист', 1], a3: ['Хартия А3', 'лист', 2], tonerA4: ['Тонер за едностранно отпечатване А4', 'стр.', 2], tonerA3: ['Тонер за едностранно отпечатване А3', 'стр.', 4],
@@ -214,17 +246,20 @@ const COST_NORMS = {
 const LEV_PER_EUR_ = 1.95583;
 const NO_COST_FORM_ = /електронен път|платформата|устна справка/;
 const money_ = n => n.toFixed(2).replace('.', ',');
+/* цена в десетохилядни от евро */
+const eurUnit_ = st => Math.floor(st * 100 / LEV_PER_EUR_);
+const euro_ = x => (x / 10000).toFixed(4).replace(/(\.\d\d\d*?)0+$/, '$1').replace('.', ',');
 
 function costsOf_(items) {
   let sum = 0;
   const lines = Object.keys(COST_NORMS).filter(k => Number(items[k]) > 0).map(k => {
-    const n = COST_NORMS[k], qty = Number(items[k]), line = qty * n[2];
+    const n = COST_NORMS[k], qty = Number(items[k]), unit = eurUnit_(n[2]), line = qty * unit;
     sum += line;
-    return n[0] + ': ' + qty + ' ' + n[1] + ' × ' + money_(n[2] / 100) + ' лв. = ' + money_(line / 100) + ' лв.';
+    return n[0] + ': ' + qty + ' ' + n[1] + ' × ' + euro_(unit) + ' евро = ' + euro_(line) + ' евро';
   });
   if (!sum) return { text: 'Няма дължими разходи.', total: '' };
-  const total = money_(Math.round(sum / LEV_PER_EUR_) / 100);
-  return { text: lines.join('; ') + ' Общо ' + money_(sum / 100) + ' лв., равни на ' + total + ' евро по фиксирания курс 1 евро = 1,95583 лв. (Наредба № Н-1 от 7 март 2022 г.).', total: total };
+  const total = money_(Math.round(sum / 100) / 100);
+  return { text: lines.join('; ') + '. Общо ' + total + ' евро (нормативите по Наредба № Н-1 от 7 март 2022 г., превърнати по фиксирания курс и закръглени надолу).', total: total };
 }
 
 /* сумата се изчислява на сървъра; подадените от браузъра текст и сума се пренебрегват */
@@ -305,6 +340,7 @@ function docCreate_(d, ctx) {
   }
   const regNo = source ? source.regNo : d.regNo;
   const c = def.noCase || (def.maybeCase && !regNo) ? null : visibleCase_(ss, regNo, ctx);
+  if (c) unlocked_(c);
   if (def.decision) {
     if (!f.court && c && oblastOfCase_(c)) f.court = courtForOblast_(oblastOfCase_(c));
     if (f.court && OBLASTS_.map(courtForOblast_).indexOf(f.court) < 0) fail_('court', 'Изберете административен съд от списъка.');

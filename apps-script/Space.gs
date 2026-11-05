@@ -114,6 +114,7 @@ function fileRef_(ss, scope, ref, ctx) {
 
 function fileUpload_(d, ctx) {
   const ss = ctx.ss(), scope = oneOf_(d.scope, ['case', 'court'], 'Вид'), ref = fileRef_(ss, scope, d.ref, ctx);
+  if (scope === 'case') unlocked_(findCase_(ss, ref));
   const name = line_(d.name, 180).replace(/[\\/:*?"<>|]/g, '_'), ext = (/\.([a-z0-9]+)$/i.exec(name) || [])[1];
   const mime = ext ? FILE_TYPES[ext.toLowerCase()] : null;
   if (!name || !mime) fail_('filetype', 'Разрешени са файлове ' + Object.keys(FILE_TYPES).join(', ') + '.');
@@ -178,6 +179,7 @@ function fileGet_(d, ctx) {
 
 function fileDelete_(d, ctx) {
   const ss = ctx.ss(), f = visibleFile_(ss, d.id, ctx);
+  if (f.scope === 'case') unlocked_(findCase_(ss, f.ref));
   dropFile_(ss, f);
   audit_(ss, ctx.username, 'Изтрит файл', f.ref, f.id);
   if (f.scope === 'case') event_(ss, f.ref, ctx.username, 'Файл', 'Изтрит файл: ' + f.name);

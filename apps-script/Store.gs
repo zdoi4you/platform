@@ -7,10 +7,15 @@ const SCHEMA = {
   changes: ['Заявки за промяна', { id: '№', at: 'Подадена', no: 'Номер на организация', orgName: 'Организация', by: 'Подал', status: 'Статус', basis: 'Основание', changed: 'Промени (JSON)', reason: 'Причина за отказ', decidedBy: 'Решил', decidedAt: 'Дата на решение' }],
   plans: ['Планове', { id: 'ID', name: 'Наименование', description: 'Описание', status: 'Състояние', by: 'Въвел', at: 'Въведен' }],
   logins: ['Входове', { at: 'Време', username: 'Потребител', ip: 'IP адрес', agent: 'Браузър', result: 'Резултат' }],
+  tickets: ['Тикети', { id: '№', at: 'Подаден', no: 'Номер на организация', orgName: 'Организация', by: 'Подал', byName: 'Име', kind: 'Вид', subject: 'Тема', status: 'Статус', handler: 'Оператор', updatedAt: 'Променен', closedAt: 'Затворен' }],
+  ticketMsgs: ['Съобщения по тикети', { at: 'Време', ticket: 'Тикет', side: 'Страна', author: 'Автор', name: 'Име', text: 'Текст' }],
+  systems: ['Статус на системите', { id: 'ID', name: 'Система', state: 'Състояние', note: 'Бележка', updatedAt: 'Променено', by: 'Променил' }],
+  notices: ['Профилактики', { id: '№', at: 'Въведена', by: 'Въвел', title: 'Заглавие', text: 'Текст', from: 'От', to: 'До', state: 'Състояние', mail: 'Имейл', mailCursor: 'Обработени организации', mailSent: 'Изпратени', mailFailed: 'Неуспешни', mailDone: 'Изпращането приключи' }],
+  noticeSent: ['Изпратени известия', { notice: 'Профилактика', email: 'Имейл', at: 'Време', ok: 'Изпратено' }],
   log: ['Дневник', { at: 'Време', actor: 'Потребител', action: 'Действие', ref: 'Обект', details: 'Подробности' }],
 
   profile: ['Профил', { key: 'Ключ', value: 'Стойност' }],
-  users: ['Потребители', { username: 'Потребител', name: 'Име', position: 'Длъжност', email: 'Имейл', phone: 'Телефон', role: 'Роля', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден', createdBy: 'Създал', mustChange: 'Да смени паролата', perms: 'Права (JSON)', notify: 'Известия (JSON)', twofa: 'Двуфакторен вход' }],
+  users: ['Потребители', { username: 'Потребител', name: 'Име', position: 'Длъжност', email: 'Имейл', phone: 'Телефон', role: 'Роля', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден', createdBy: 'Създал', mustChange: 'Да смени паролата', perms: 'Права (JSON)', notify: 'Известия (JSON)', twofa: 'Двуфакторен вход', department: 'Отдел', noticeSeen: 'Прочетени известия до' }],
   cases: ['Преписки', {
     regNo: 'Рег. №', createdAt: 'Въведена', createdBy: 'Въвел', kind: 'Вид заявление', regDate: 'Дата на регистриране', channel: 'Начин на подаване',
     applicantType: 'Вид заявител', applicantName: 'Заявител', applicantSeat: 'Седалище', applicantAddress: 'Адрес за кореспонденция', applicantEmail: 'Имейл', applicantPhone: 'Телефон',
@@ -19,7 +24,7 @@ const SCHEMA = {
     clarifyAsked: 'Поискано уточняване', clarifyGot: 'Получено уточняване', ext30: 'Удължаване чл. 30 (дни)', ext31: 'Удължаване чл. 31 (дни)', thirdAsked: 'Поискано съгласие',
     refusalGround: 'Основание за отказ', decisionNo: 'Решение №', decisionDate: 'Дата на решение', served: 'Връчено на', servedHow: 'Начин на връчване',
     published15c: 'Публикувано на платформата (чл. 15в)', appealed: 'Обжалвано', appealNote: 'Бележка за обжалването', updatedAt: 'Променена',
-    applicantOblast: 'Област на адресата', thirdGot: 'Получен отговор от трето лице', applicantEik: 'ЕИК/БУЛСТАТ на заявителя'
+    applicantOblast: 'Област на адресата', thirdGot: 'Получен отговор от трето лице', applicantEik: 'ЕИК/БУЛСТАТ на заявителя', locked: 'Заключена', lockedBy: 'Заключил', lockedAt: 'Заключена на'
   }],
   events: ['Събития', { at: 'Време', regNo: 'Рег. №', user: 'Потребител', kind: 'Вид', text: 'Текст' }],
   docs: ['Документи', { id: 'ID', no: 'Номер', type: 'Вид', title: 'Заглавие', regNo: 'Рег. №', date: 'Дата', at: 'Създаден', author: 'Автор', payload: 'Данни (JSON)' }],
