@@ -5,10 +5,8 @@
  * HMAC-SHA256(резултат + сол на потребителя) с таен ключ (PEPPER) в свойствата на скрипта. Така
  * хешовете в таблиците не могат да се проверяват офлайн без ключа, който не е в таблица.
  *
- * Организациите не получават данни за вход по имейл. Администраторът избира паролата си във формата
- * за регистрация и вижда номера на организацията на екрана. Служител или забравена парола минават през
- * еднократна връзка, показана на екрана на администратора и предадена лично. Сървърът не създава
- * и не знае пароли.
+ * Номерът на организацията и еднократните връзки за парола се изпращат по имейл на самия потребител.
+ * Паролите не се изпращат: потребителят ги избира сам, а сървърът не ги създава и не ги знае.
  */
 
 const NO_RE_ = /^\d{8}$/, USER_RE_ = /^[a-z0-9._-]{3,40}$/, PREHASH_RE_ = /^[A-Za-z0-9+/=]{40,64}$/;
@@ -72,39 +70,64 @@ function accountTable_(no) {
 
 /* ---------- ограничаване на опитите ---------- */
 
-function throttle_(id) {
+function throttle_(id, limit) {
   const cache = CacheService.getScriptCache(), key = 'f:' + sha256_(id);
   return {
-    blocked: () => (Number(cache.get(key)) || 0) >= CFG.MAX_FAILS,
-    hit: () => cache.put(key, String((Number(cache.get(key)) || 0) + 1), CFG.FAIL_WINDOW_S),
+    blocked: () => (Number(cache.get(key)) || 0) >= (limit || CFG.MAX_FAILS),
+    hit: () => { const n = (Number(cache.get(key)) || 0) + 1; cache.put(key, String(n), CFG.FAIL_WINDOW_S); return n; },
     clear: () => cache.remove(key)
   };
 }
 
-const badLogin_ = () => fail_('login', 'Грешен номер на организация, потребител или парола.');
+const badLogin_ = left => fail_('login', 'Грешен номер на организация, потребител или парола.' + (left ? ' Остават ' + left + (left === 1 ? ' опит.' : ' опита.') : ''));
+const LOCKED_MSG_ = 'Твърде много неуспешни опити. Опитайте отново след 15 минути или поискайте нова парола по имейл.';
+
+/* IP адресът идва от браузъра (Cloudflare), защото Apps Script не вижда адреса на посетителя */
+const cleanIp_ = v => { const t = str_(v, 45); return /^[0-9a-fA-F:.]{3,45}$/.test(t) && /[.:]/.test(t) ? t : ''; };
+
+function recordLogin_(ss, username, ip, agent, result) {
+  insert_(ss, 'logins', { at: stamp_(), username: username, ip: ip, agent: agent, result: result });
+}
+
+/* еднократна връзка за парола заедно с номера и потребителя; самата парола не се изпраща */
+function accessMail_(to, no, username, link, validFor) {
+  return mail_(to, 'ЗДОИ4You Платформа – достъп',
+    'Номер на организацията: ' + no + '\nПотребител: ' + username + '\n\n' +
+    'Задайте парола с тази еднократна връзка. Тя важи ' + validFor + ':\n' + link + '\n\n' +
+    'Не препращайте това писмо. Ако не го очаквате, не отваряйте връзката и пишете на ' + CFG.SUPPORT + '.');
+}
 
 function login_(d) {
   const no = str_(d.no, 8), username = str_(d.username, 40).toLowerCase(), preHash = str_(d.hash, 64);
   if (!NO_RE_.test(no) || !USER_RE_.test(username) || !PREHASH_RE_.test(preHash)) badLogin_();
-  const t = throttle_(no + '|' + username);
-  if (t.blocked()) fail_('locked', 'Твърде много неуспешни опити. Опитайте отново след 15 минути.');
+  const ip = cleanIp_(d.ip), agent = line_(d.agent, 200);
+  const t = throttle_(no + '|' + username), byIp = ip ? throttle_('ip|' + ip, CFG.MAX_IP_FAILS) : null;
+  if (t.blocked() || (byIp && byIp.blocked())) fail_('locked', LOCKED_MSG_);
   const acc = accountTable_(no);
   const u = acc ? read_(acc.ss, acc.key).find(x => x.username === username) : null;
   const ok = u && u.active === 'Да' && u.salt && sameText_(serverHash_(preHash, u.salt), u.hash);
   if (!ok) {
-    t.hit();
-    if (u) audit_(acc.ss, username, 'Неуспешен вход', '', '');
-    badLogin_();
+    const count = t.hit();
+    if (byIp) byIp.hit();
+    // въведеното име може да е парола, написана погрешно, затова непознато име не се записва
+    if (acc) recordLogin_(acc.ss, u ? username : '(непознат)', ip, agent, !u ? 'Непознат потребител' : u.active === 'Да' ? 'Грешна парола' : 'Спрян потребител');
+    if (u) audit_(acc.ss, username, 'Неуспешен вход', '', ip);
+    if (count >= CFG.MAX_FAILS) {
+      if (acc) recordLogin_(acc.ss, u ? username : '(непознат)', ip, agent, 'Заключен за 15 минути');
+      if (u && u.email) mail_(u.email, 'ЗДОИ4You Платформа – спрян вход', 'Входът за потребител ' + username + ' е спрян за 15 минути след ' + count + ' неуспешни опита' + (ip ? ' (последен IP адрес: ' + ip + ')' : '') + '.\n\nАко не сте опитвали вие, сменете паролата си след отпадане на ограничението и уведомете администратора.');
+      fail_('locked', LOCKED_MSG_);
+    }
+    badLogin_(CFG.MAX_FAILS - count);
   }
   t.clear();
   const at = stamp_();
   patch_(acc.ss, acc.key, u._row, { lastLogin: at });
-  audit_(acc.ss, username, 'Вход', '', '');
+  recordLogin_(acc.ss, username, ip, agent, 'Успешен');
+  audit_(acc.ss, username, 'Вход', '', ip);
   const token = randomToken_(), exp = Date.now() + CFG.SESSION_MIN * 6e4;
-  const mc = u.mustChange === 'Да';
-  saveSession_(token, { no: no, u: username, exp: exp, mc: mc });
+  saveSession_(token, { no: no, u: username, exp: exp });
   const role = acc.org ? u.role : ROLE_OP;
-  return { token: token, session: exp, me: Object.assign(meInfo_(no, acc.org, u, role), { mustChange: mc, perms: acc.org ? permsOf_(u) : {} }) };
+  return { token: token, session: exp, me: Object.assign(meInfo_(no, acc.org, u, role), { perms: acc.org ? permsOf_(u) : {} }) };
 }
 
 function meInfo_(no, org, u, role) {
@@ -189,12 +212,18 @@ function logout_(d, ctx) {
 function changePassword_(d, ctx) {
   const cur = str_(d.current, 64), next = str_(d.next, 64);
   if (!PREHASH_RE_.test(cur) || !PREHASH_RE_.test(next)) fail_('value', 'Невалидни данни.');
+  const t = throttle_('pw|' + ctx.no + '|' + ctx.username);
+  if (t.blocked()) fail_('locked', 'Твърде много грешни опити за текуща парола. Опитайте отново след 15 минути.');
   const ss = ctx.ss(), u = read_(ss, ctx.table).find(x => x.username === ctx.username);
-  if (!u || !u.salt || !sameText_(serverHash_(cur, u.salt), u.hash)) fail_('password', 'Текущата парола е грешна.');
+  if (!u || !u.salt || !sameText_(serverHash_(cur, u.salt), u.hash)) {
+    t.hit();
+    audit_(ss, ctx.username, 'Грешна текуща парола', '', '');
+    fail_('password', 'Текущата парола е грешна.');
+  }
+  t.clear();
   const salt = randomToken_().slice(0, 32);
   if (next === cur) fail_('password', 'Новата парола трябва да е различна от текущата.');
   patch_(ss, ctx.table, u._row, { salt: salt, hash: serverHash_(next, salt), mustChange: '' });
-  if (ctx.session.mc) { ctx.session.mc = false; saveSession_(ctx.token, ctx.session); }
   audit_(ss, ctx.username, 'Смяна на парола', '', '');
   return {};
 }
@@ -212,8 +241,26 @@ function activate_(d) {
     invalid();
   }
   t.clear();
+  throttle_(no + '|' + username).clear(); // новата парола отменя ограничението за вход
   const salt = randomToken_().slice(0, 32);
   patch_(acc.ss, acc.key, u._row, { salt: salt, hash: serverHash_(preHash, salt), inviteHash: '', inviteExp: '', mustChange: '' });
   audit_(acc.ss, username, 'Зададена парола чрез покана', '', '');
   return { no: no, username: username };
+}
+
+/* забравена парола: отговорът е еднакъв, за да не се разбира кои потребители съществуват; операторите използват operatorReset */
+function forgot_(d) {
+  const no = str_(d.no, 8), username = str_(d.username, 40).toLowerCase();
+  if (!NO_RE_.test(no) || !USER_RE_.test(username) || no === CFG.OPERATOR_NO) return {};
+  const t = throttle_('forgot|' + no + '|' + username);
+  if (t.blocked()) return {};
+  t.hit();
+  const acc = accountTable_(no);
+  const u = acc ? read_(acc.ss, acc.key).find(x => x.username === username) : null;
+  if (!u || u.active !== 'Да' || !u.email) return {};
+  const inv = newInvite_(CFG.RESET_HOURS);
+  patch_(acc.ss, acc.key, u._row, { inviteHash: inv.hash, inviteExp: inv.exp });
+  audit_(acc.ss, username, 'Поискана нова парола', '', cleanIp_(d.ip));
+  accessMail_(u.email, no, username, inviteLink_(no, username, inv.token), CFG.RESET_HOURS + ' часа');
+  return {};
 }

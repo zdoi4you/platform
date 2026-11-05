@@ -219,6 +219,7 @@
   const toApplicant = c => ({ margin: [0, 0, 0, 12], stack: [
     { text: 'ДО', bold: true },
     { text: c.applicantName, bold: true },
+    ...(c.applicantEik ? [{ text: `ЕИК/БУЛСТАТ: ${c.applicantEik}` }] : []),
     ...(c.applicantSeat ? [{ text: `седалище: ${c.applicantSeat}` }] : []),
     { text: c.applicantAddress || '' },
     { text: c.applicantEmail || '' },
@@ -226,7 +227,7 @@
   ] });
   const salute = c => (c.applicantType === 'Гражданин' || c.applicantType === 'Журналист или медия' ? `Уважаеми/а г-н/г-жо ${c.applicantName},` : 'Уважаеми дами и господа,');
   const reqRef = c => `заявление за достъп до обществена информация с рег. № ${c.regNo} от ${fmt(c.regDate)}`;
-  const applicantLine = c => [c.applicantName, c.applicantSeat && `седалище: ${c.applicantSeat}`, c.applicantAddress && `адрес: ${c.applicantAddress}`, c.applicantEmail && `имейл: ${c.applicantEmail}`].filter(Boolean).join(', ');
+  const applicantLine = c => [c.applicantName, c.applicantEik && `ЕИК/БУЛСТАТ: ${c.applicantEik}`, c.applicantSeat && `седалище: ${c.applicantSeat}`, c.applicantAddress && `адрес: ${c.applicantAddress}`, c.applicantEmail && `имейл: ${c.applicantEmail}`].filter(Boolean).join(', ');
   const reqAbout = c => `Заявител: ${applicantLine(c)}. Искана информация: ${c.subject}`;
 
   function letter(p, opts) {
@@ -451,7 +452,7 @@
 
   const PERMS = [
     ['casesAll', 'Вижда всички преписки и адресати', 'Без това право вижда само възложените на него и въведените от него.'],
-    ['casesEdit', 'Създава и променя преписки и адресати, пише коментари', ''],
+    ['casesEdit', 'Създава и променя преписки, адресати, дела и файлове, пише коментари', ''],
     ['letters', 'Издава писма и протоколи', ''],
     ['decisions', 'Издава решения', ''],
     ['reports', 'Годишни отчети', ''],

@@ -54,7 +54,7 @@ function newPreHash_(raw) {
 const numberTaken_ = (m, no) => read_(m, 'orgs').some(x => x.no === no) || read_(m, 'apps').some(x => x.orgNo === no && x.status !== 'Отказана');
 
 /* отделна таблица за организацията и първият ѝ администратор */
-function createOrg_(m, data, no, salt, hash, actor, mustChange, ref) {
+function createOrg_(m, data, no, access, actor, ref) {
   const book = SpreadsheetApp.create('ЗДОИ4You – ' + no + ' – ' + data.name);
   const folderId = PropertiesService.getScriptProperties().getProperty('FOLDER_ID');
   DriveApp.getFileById(book.getId()).moveTo(DriveApp.getFolderById(folderId));
@@ -63,7 +63,7 @@ function createOrg_(m, data, no, salt, hash, actor, mustChange, ref) {
   Object.keys(ORG_FIELDS).forEach(k => insert_(book, 'profile', { key: k, value: data[k] }));
   insert_(book, 'users', {
     username: data.adminUsername, name: data.adminName, position: data.adminPosition, email: data.adminEmail, phone: data.adminPhone,
-    role: ROLE_ADMIN, active: 'Да', salt: salt, hash: hash, createdAt: stamp_(), createdBy: actor, mustChange: mustChange ? 'Да' : ''
+    role: ROLE_ADMIN, active: 'Да', salt: access.salt || '', hash: access.hash || '', inviteHash: access.inviteHash || '', inviteExp: access.inviteExp || '', createdAt: stamp_(), createdBy: actor
   });
   audit_(book, actor, 'Организацията е създадена', no, ref);
   insert_(m, 'orgs', { no: no, name: data.name, eik: data.eik, type: data.type, status: 'Активна', sheetId: book.getId(), approvedAt: stamp_(), approvedBy: actor, adminUser: data.adminUsername });
@@ -157,16 +157,17 @@ function opDecide_(d, ctx) {
   const no = app.orgNo;
   if (orgs.some(x => x.no === no)) fail_('duplicate', 'Номерът на организацията вече се използва.');
 
-  createOrg_(m, data, no, app.salt, app.hash, ctx.username, false, app.id);
+  createOrg_(m, data, no, { salt: app.salt, hash: app.hash }, ctx.username, app.id);
   // хешът вече е в таблицата на организацията и не остава в главната
   patch_(m, 'apps', app._row, { status: 'Одобрена', decidedBy: ctx.username, decidedAt: stamp_(), salt: '', hash: '' });
   audit_(m, ctx.username, 'Одобрена регистрация', app.id, no + ' ' + data.name);
 
-  // само известие: без номер, потребител, парола или връзка
-  const notice = 'Заявката за регистрация на „' + data.name + '“ е одобрена.\n\n' +
-    'Влезте на ' + CFG.APP_URL + ' с номера на организацията, показан при подаването на заявката, и с избраните потребителско име и парола.';
-  [data.adminEmail, data.email].filter((x, i, all) => all.indexOf(x) === i).forEach(to => mail_(to, 'ЗДОИ4You Платформа – одобрена регистрация', notice));
-  return { no: no };
+  // номерът отива при администратора; паролата е избрана от него и не се изпраща
+  const emailed = mail_(data.adminEmail, 'ЗДОИ4You Платформа – одобрена регистрация',
+    'Заявката за регистрация на „' + data.name + '“ е одобрена.\n\nНомер на организацията: ' + no + '\nПотребител: ' + data.adminUsername + '\n\n' +
+    'Влезте на ' + CFG.APP_URL + ' с тези данни и с паролата, която избрахте при заявката.');
+  if (data.email !== data.adminEmail) mail_(data.email, 'ЗДОИ4You Платформа – одобрена регистрация', 'Заявката за регистрация на „' + data.name + '“ е одобрена. Данните за вход са изпратени на определения администратор.');
+  return { no: no, emailed: emailed };
 }
 
 function opStatus_(d, ctx) {
@@ -193,7 +194,7 @@ function usersPublic_(ss) {
 
 function opOrgGet_(d, ctx) {
   const org = regOrg_(d.no), book = orgSheet_(org);
-  return { no: org.no, status: org.status, plan: org.plan, plans: plansOf_(master_()), profile: profile_(book), users: usersPublic_(book), signers: signersOf_(book), grounds: groundsOf_(book) };
+  return { no: org.no, status: org.status, plan: org.plan, plans: plansOf_(master_()), logins: loginRows_(book, 100), profile: profile_(book), users: usersPublic_(book), signers: signersOf_(book), grounds: groundsOf_(book) };
 }
 
 /* ---------- собствени правни основания на организацията ---------- */
@@ -318,8 +319,9 @@ function addresseesOf_(ss, ctx) {
 function saveAddressee_(ss, d, ctx) {
   const v = {
     type: oneOf_(d.type, addresseeTypes_(), 'Вид'), name: line_(d.name, 200), seat: line_(d.seat, 120), address: line_(d.address, 300),
-    oblast: line_(d.oblast, 80), email: line_(d.email, 200), phone: line_(d.phone, 40)
+    oblast: line_(d.oblast, 80), email: line_(d.email, 200), phone: line_(d.phone, 40), eik: line_(d.eik, 13)
   };
+  if (v.eik && !validEik_(v.eik)) fail_('eik', 'Невалиден ЕИК/БУЛСТАТ на адресата.');
   if (!v.name) fail_('required', 'Напишете име или наименование на адресата.');
   if (!v.address && !v.email) fail_('required', 'Посочете адрес или имейл на адресата.');
   if (v.email && !isEmail_(v.email)) fail_('email', 'Невалиден имейл на адресата.');
@@ -375,23 +377,23 @@ function opAddresseeDelete_(d, ctx) {
 function caseCreateWithAddressee_(d, ctx) {
   const r = caseCreate_(d, ctx);
   if (d.saveAddressee === 'on') {
-    saveAddressee_(ctx.ss(), { type: d.applicantType, name: d.applicantName, seat: d.applicantSeat, address: d.applicantAddress, oblast: d.applicantOblast, email: d.applicantEmail, phone: d.applicantPhone }, ctx);
+    saveAddressee_(ctx.ss(), { type: d.applicantType, name: d.applicantName, seat: d.applicantSeat, address: d.applicantAddress, oblast: d.applicantOblast, email: d.applicantEmail, phone: d.applicantPhone, eik: d.applicantEik }, ctx);
   }
   return r;
 }
 
 /* операторът добавя организация директно, без заявка */
 function opOrgCreate_(d, ctx) {
-  const org = cleanOrg_(d), admin = cleanAdmin_(d), no = newNumber_(d.no), preHash = newPreHash_(d.hash), m = master_();
+  const org = cleanOrg_(d), admin = cleanAdmin_(d), no = newNumber_(d.no), m = master_();
   if (read_(m, 'orgs').some(x => x.eik === org.eik && x.status !== 'Закрита')) fail_('duplicate', 'Организация с този ЕИК/БУЛСТАТ вече е регистрирана.');
   if (read_(m, 'apps').some(x => x.eik === org.eik && x.status === 'Чака одобрение')) fail_('duplicate', 'За този ЕИК/БУЛСТАТ има подадена заявка, която чака одобрение. Решете я от „Заявки за регистрация“.');
   if (numberTaken_(m, no)) fail_('retry', 'Номерът е зает. Опитайте отново.');
-  const salt = randomToken_().slice(0, 32);
-  createOrg_(m, Object.assign({}, org, admin), no, salt, serverHash_(preHash, salt), opActor_(ctx), true, 'добавена от оператор');
+  const inv = newInvite_(CFG.INVITE_DAYS * 24);
+  createOrg_(m, Object.assign({}, org, admin), no, { inviteHash: inv.hash, inviteExp: inv.exp }, opActor_(ctx), 'добавена от оператор');
   audit_(m, ctx.username, 'Добавена организация', no, org.name);
-  mail_(org.email, 'ЗДОИ4You Платформа – регистрирана организация',
-    '„' + org.name + '“ е регистрирана в платформата ' + CFG.APP_URL + ' от екипа на ЗДОИ4You. Данните за вход се предават лично.');
-  return { no: no };
+  const emailed = accessMail_(admin.adminEmail, no, admin.adminUsername, inviteLink_(no, admin.adminUsername, inv.token), CFG.INVITE_DAYS + ' дни');
+  if (org.email !== admin.adminEmail) mail_(org.email, 'ЗДОИ4You Платформа – регистрирана организация', '„' + org.name + '“ е регистрирана в платформата ' + CFG.APP_URL + ' от екипа на ЗДОИ4You. Данните за вход са изпратени на определения администратор.');
+  return { no: no, emailed: emailed };
 }
 
 function saveProfile_(book, cur, next, actor) {
@@ -490,18 +492,44 @@ function opUserSave_(d, ctx) {
   return r;
 }
 
-/* паролата се генерира в браузъра на оператора; тук идва само нейният хеш */
-function opUserPassword_(d, ctx) {
-  const reg = regOrg_(d.no), book = orgSheet_(reg), preHash = newPreHash_(d.hash);
+/* операторът изпраща на потребителя еднократна връзка за нова парола; старата работи, докато не зададе нова */
+function opUserInvite_(d, ctx) {
+  const reg = regOrg_(d.no), book = orgSheet_(reg);
   const username = str_(d.username, 40).toLowerCase();
   const u = read_(book, 'users').find(x => x.username === username);
-  if (!u) fail_('notfound', 'Потребителят не е намерен.');
-  const salt = randomToken_().slice(0, 32);
-  patch_(book, 'users', u._row, { salt: salt, hash: serverHash_(preHash, salt), inviteHash: '', inviteExp: '', mustChange: 'Да' });
+  if (!u || u.active !== 'Да') fail_('notfound', 'Няма такъв активен потребител.');
+  const inv = newInvite_(CFG.INVITE_DAYS * 24);
+  patch_(book, 'users', u._row, { inviteHash: inv.hash, inviteExp: inv.exp });
   throttle_(reg.no + '|' + username).clear();
-  audit_(book, opActor_(ctx), 'Генерирана парола от оператор', username, '');
-  audit_(master_(), ctx.username, 'Генерирана парола', reg.no, username);
-  return {};
+  audit_(book, opActor_(ctx), 'Изпратена връзка за парола от оператор', username, '');
+  audit_(master_(), ctx.username, 'Изпратена връзка за парола', reg.no, username);
+  return { emailed: accessMail_(u.email, reg.no, username, inviteLink_(reg.no, username, inv.token), CFG.INVITE_DAYS + ' дни') };
+}
+
+/* ---------- входове по IP адрес ---------- */
+
+/* „нов адрес“: успешен вход от адрес, от който потребителят не е влизал успешно */
+function loginRows_(ss, limit) {
+  const seen = {}, known = {};
+  const rows = read_(ss, 'logins').map(l => {
+    const o = Object.assign({}, l);
+    delete o._row;
+    if (l.result === 'Успешен') {
+      o.newIp = !!l.ip && !!known[l.username] && !seen[l.username + '|' + l.ip];
+      known[l.username] = true;
+      seen[l.username + '|' + l.ip] = true;
+    }
+    return o;
+  });
+  return rows.slice(-limit).reverse();
+}
+
+function loginsList_(d, ctx) {
+  return { logins: loginRows_(ctx.ss(), 500) };
+}
+
+function opLogins_(d) {
+  return { logins: loginRows_(orgSheet_(regOrg_(d.no)), 500) };
 }
 
 /* ---------- организация ---------- */
@@ -557,7 +585,7 @@ function usersSave_(d, ctx) {
   const inv = newInvite_(CFG.INVITE_DAYS * 24);
   insert_(ss, 'users', Object.assign({ username: username, inviteHash: inv.hash, inviteExp: inv.exp, createdAt: stamp_(), createdBy: ctx.username }, v));
   audit_(ss, ctx.username, 'Нов потребител', username, v.role);
-  return { created: true, link: inviteLink_(ctx.no, username, inv.token) };
+  return { created: true, emailed: accessMail_(v.email, ctx.no, username, inviteLink_(ctx.no, username, inv.token), CFG.INVITE_DAYS + ' дни') };
 }
 
 function usersInvite_(d, ctx) {
@@ -566,7 +594,7 @@ function usersInvite_(d, ctx) {
   const inv = newInvite_(CFG.INVITE_DAYS * 24);
   patch_(ss, 'users', u._row, { inviteHash: inv.hash, inviteExp: inv.exp });
   audit_(ss, ctx.username, 'Нова връзка за парола', u.username, '');
-  return { link: inviteLink_(ctx.no, u.username, inv.token) };
+  return { emailed: accessMail_(u.email, ctx.no, u.username, inviteLink_(ctx.no, u.username, inv.token), CFG.INVITE_DAYS + ' дни') };
 }
 
 function orgLog_(d, ctx) {

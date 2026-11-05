@@ -6,6 +6,7 @@ const SCHEMA = {
   ops: ['Оператори', { username: 'Потребител', name: 'Име', email: 'Имейл', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден' }],
   changes: ['Заявки за промяна', { id: '№', at: 'Подадена', no: 'Номер на организация', orgName: 'Организация', by: 'Подал', status: 'Статус', basis: 'Основание', changed: 'Промени (JSON)', reason: 'Причина за отказ', decidedBy: 'Решил', decidedAt: 'Дата на решение' }],
   plans: ['Планове', { id: 'ID', name: 'Наименование', description: 'Описание', status: 'Състояние', by: 'Въвел', at: 'Въведен' }],
+  logins: ['Входове', { at: 'Време', username: 'Потребител', ip: 'IP адрес', agent: 'Браузър', result: 'Резултат' }],
   log: ['Дневник', { at: 'Време', actor: 'Потребител', action: 'Действие', ref: 'Обект', details: 'Подробности' }],
 
   profile: ['Профил', { key: 'Ключ', value: 'Стойност' }],
@@ -18,7 +19,7 @@ const SCHEMA = {
     clarifyAsked: 'Поискано уточняване', clarifyGot: 'Получено уточняване', ext30: 'Удължаване чл. 30 (дни)', ext31: 'Удължаване чл. 31 (дни)', thirdAsked: 'Поискано съгласие',
     refusalGround: 'Основание за отказ', decisionNo: 'Решение №', decisionDate: 'Дата на решение', served: 'Връчено на', servedHow: 'Начин на връчване',
     published15c: 'Публикувано на платформата (чл. 15в)', appealed: 'Обжалвано', appealNote: 'Бележка за обжалването', updatedAt: 'Променена',
-    applicantOblast: 'Област на адресата', thirdGot: 'Получен отговор от трето лице'
+    applicantOblast: 'Област на адресата', thirdGot: 'Получен отговор от трето лице', applicantEik: 'ЕИК/БУЛСТАТ на заявителя'
   }],
   events: ['Събития', { at: 'Време', regNo: 'Рег. №', user: 'Потребител', kind: 'Вид', text: 'Текст' }],
   docs: ['Документи', { id: 'ID', no: 'Номер', type: 'Вид', title: 'Заглавие', regNo: 'Рег. №', date: 'Дата', at: 'Създаден', author: 'Автор', payload: 'Данни (JSON)' }],
@@ -26,9 +27,11 @@ const SCHEMA = {
   counters: ['Броячи', { key: 'Ключ', value: 'Стойност' }],
   grounds: ['Правни основания', { id: 'ID', scope: 'Вид акт', text: 'Основание', active: 'Активно', by: 'Въвел', at: 'Въведено' }],
   signers: ['Упълномощени лица', { id: 'ID', name: 'Име', position: 'Длъжност', act: 'Акт за определяне', from: 'В сила от', to: 'В сила до', active: 'Активно', by: 'Въвел', at: 'Въведено' }],
-  addressees: ['Адресати', { id: 'ID', type: 'Вид', name: 'Име или наименование', seat: 'Седалище', address: 'Адрес', oblast: 'Област', email: 'Имейл', phone: 'Телефон', by: 'Въвел', at: 'Въведен' }]
+  addressees: ['Адресати', { id: 'ID', type: 'Вид', name: 'Име или наименование', seat: 'Седалище', address: 'Адрес', oblast: 'Област', email: 'Имейл', phone: 'Телефон', by: 'Въвел', at: 'Въведен', eik: 'ЕИК/БУЛСТАТ' }],
+  courts: ['Дела', { id: 'ID', regNo: 'Преписка', court: 'Съд', caseNo: '№ на дело', year: 'Година', kind: 'Вид', status: 'Статус', nextHearing: 'Следващо заседание', note: 'Бележки', by: 'Въвел', at: 'Въведено', updatedAt: 'Променено' }],
+  files: ['Файлове', { id: 'ID', scope: 'Вид', ref: 'Преписка или дело', name: 'Име', type: 'Тип', size: 'Размер', driveId: 'ID в Drive', by: 'Качил', at: 'Качен' }]
 };
-const ORG_TABLES = ['profile', 'users', 'cases', 'events', 'docs', 'art15', 'counters', 'signers', 'grounds', 'addressees', 'log'];
+const ORG_TABLES = ['profile', 'users', 'cases', 'events', 'docs', 'art15', 'counters', 'signers', 'grounds', 'addressees', 'courts', 'files', 'logins', 'log'];
 const HEADERS_CHECKED_ = {};
 
 const master_ = () => {
@@ -165,7 +168,7 @@ function validEik_(raw) {
 
 function mail_(to, subject, body) {
   try {
-    MailApp.sendEmail({ to: to, subject: line_(subject, 200), body: body + '\n\n--\nПоддръжка: ' + CFG.SUPPORT, name: 'ЗДОИ4You Платформа', replyTo: CFG.SUPPORT });
+    MailApp.sendEmail({ to: to, subject: line_(subject, 200), body: body + '\n\n--\n' + CFG.MAINTAINER + '\nПоддръжка: ' + CFG.SUPPORT, name: 'ЗДОИ4You Платформа', replyTo: CFG.SUPPORT });
     return true;
   } catch (e) {
     console.error('mail: ' + e);

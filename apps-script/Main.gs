@@ -18,9 +18,13 @@ const CFG = {
   RESET_HOURS: 2,
   OPERATOR_NO: '00000000',
   MAX_FAILS: 5,
+  MAX_IP_FAILS: 20,
+  SPACE_MB: 1024,
+  FILE_MB: 10,
   FAIL_WINDOW_S: 900,
   APPLY_PER_HOUR: 30,
-  SUPPORT: 'support@platform.zdoi4you.eu'
+  SUPPORT: 'support@platform.zdoi4you.eu',
+  MAINTAINER: 'Услугите и платформата се поддържат от „БУЛАДМИН“ ЕООД.'
 };
 
 const ROLE_ADMIN = 'Администратор', ROLE_STAFF = 'Служител', ROLE_OP = 'Оператор';
@@ -35,6 +39,7 @@ function actions_() {
     'public.apply': { auth: 'public', write: true, fn: applyPublic_ },
     login: { auth: 'public', write: true, fn: login_ },
     activate: { auth: 'public', write: true, fn: activate_ },
+    forgot: { auth: 'public', write: true, fn: forgot_ },
 
     extend: { auth: 'any', fn: extend_ },
     logout: { auth: 'any', fn: logout_ },
@@ -51,6 +56,15 @@ function actions_() {
     'users.save': { auth: 'admin', write: true, fn: usersSave_ },
     'users.invite': { auth: 'admin', write: true, fn: usersInvite_ },
     'log.list': { auth: 'user', perm: 'log', fn: orgLog_ },
+    'logins.list': { auth: 'admin', fn: loginsList_ },
+
+    'space.list': { auth: 'user', fn: spaceList_ },
+    'court.get': { auth: 'user', fn: courtGet_ },
+    'court.save': { auth: 'user', perm: 'casesEdit', write: true, fn: courtSave_ },
+    'court.delete': { auth: 'user', perm: 'casesEdit', write: true, fn: courtDelete_ },
+    'file.upload': { auth: 'user', perm: 'casesEdit', write: true, fn: fileUpload_ },
+    'file.get': { auth: 'user', fn: fileGet_ },
+    'file.delete': { auth: 'user', perm: 'casesEdit', write: true, fn: fileDelete_ },
 
     'case.list': { auth: 'user', fn: caseList_ },
     'case.get': { auth: 'user', fn: caseGet_ },
@@ -84,7 +98,8 @@ function actions_() {
     'op.addressee.save': { auth: 'op', write: true, fn: opAddresseeSave_ },
     'op.addressee.delete': { auth: 'op', write: true, fn: opAddresseeDelete_ },
     'op.user.save': { auth: 'op', write: true, fn: opUserSave_ },
-    'op.user.password': { auth: 'op', write: true, fn: opUserPassword_ },
+    'op.user.invite': { auth: 'op', write: true, fn: opUserInvite_ },
+    'op.logins': { auth: 'op', fn: opLogins_ },
     'op.log': { auth: 'op', fn: opLog_ }
   };
 }
@@ -97,8 +112,10 @@ function doPost(e) {
   let req;
   try {
     const raw = e.postData.contents;
-    if (raw.length > 300000) return out_({ ok: false, error: 'size', message: 'Данните са твърде големи.' });
+    // само качването на файл е голямо
+    if (raw.length > (CFG.FILE_MB * 1048576 * 4 / 3) + 4096) return out_({ ok: false, error: 'size', message: 'Данните са твърде големи.' });
     req = JSON.parse(raw);
+    if (raw.length > 300000 && req.action !== 'file.upload') return out_({ ok: false, error: 'size', message: 'Данните са твърде големи.' });
   } catch (_) {
     return out_({ ok: false, error: 'bad', message: 'Невалидна заявка.' });
   }
@@ -117,8 +134,6 @@ function dispatch_(req) {
     const a = all[name];
     const data = req.data && typeof req.data === 'object' ? req.data : {};
     const ctx = a.auth === 'public' ? null : auth_(req.token, a.auth);
-    // парола, генерирана от оператор, се сменя преди всичко останало
-    if (ctx && ctx.session.mc && ['password', 'logout', 'extend'].indexOf(name) < 0) fail_('mustchange', 'Сменете паролата, за да продължите.');
     if (a.perm && !ctx.perms[a.perm]) fail_('role', 'Нямате право за това действие.');
     const run = () => a.fn(data, ctx);
     return Object.assign({ ok: true, now: Date.now() }, a.write ? locked_(run) : run());
@@ -159,7 +174,7 @@ function setup() {
     props.setProperty('MASTER_ID', masterId);
   }
   const master = SpreadsheetApp.openById(masterId);
-  ['apps', 'orgs', 'ops', 'log', 'counters', 'plans'].forEach(k => table_(master, k));
+  ['apps', 'orgs', 'ops', 'log', 'logins', 'counters', 'plans'].forEach(k => table_(master, k));
   dropDefaultSheet_(master);
   const email = String(Session.getEffectiveUser().getEmail() || '').toLowerCase();
   props.setProperty('NOTIFY', props.getProperty('NOTIFY') || email);

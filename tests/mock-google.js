@@ -51,7 +51,9 @@ class Book {
 
 function load() {
   const books = new Map(), mails = [], cache = new Map(), props = new Map();
+  const files = new Map(), folders = new Map();
   let seq = 0, clockOffset = 0;
+  const addFile = (blob, folder) => { const fid = 'file' + (++seq); files.set(fid, { blob, folder, trashed: false }); return { getId: () => fid }; };
   const now = () => Date.now() + clockOffset;
   const signed = buf => Array.from(buf).map(b => (b > 127 ? b - 256 : b));
 
@@ -63,6 +65,8 @@ function load() {
       computeHmacSha256Signature: (v, k) => signed(crypto.createHmac('sha256', k).update(v, 'utf8').digest()),
       base64Encode: a => Buffer.from(a.map(b => b & 255)).toString('base64'),
       getUuid: () => crypto.randomUUID(),
+      base64Decode: s => signed(Buffer.from(s, 'base64')),
+      newBlob: (bytes, mime, name) => ({ bytes, mime, name, getBytes: () => bytes }),
       formatDate: (d, tz, f) => {
         const iso = new Date(d.getTime()).toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T');
         return f === 'yyyy-MM-dd' ? iso.slice(0, 10) : iso;
@@ -83,8 +87,15 @@ function load() {
     },
     DriveApp: {
       createFolder: () => ({ getId: () => 'folder1' }),
-      getFolderById: id => ({ id }),
-      getFileById: id => ({ moveTo(folder) { books.get(id).folder = folder.id; } })
+      getFolderById: id => ({
+        id,
+        getId: () => id,
+        createFolder: name => { const fid = 'folder' + (++seq); folders.set(fid, name); return { id: fid, getId: () => fid, createFile: blob => addFile(blob, fid) }; },
+        createFile: blob => addFile(blob, id)
+      }),
+      getFileById: id => (files.has(id)
+        ? { getBlob: () => files.get(id).blob, setTrashed(v) { files.get(id).trashed = v; } }
+        : { moveTo(folder) { books.get(id).folder = folder.id; } })
     },
     MailApp: { sendEmail: m => { mails.push(m); } },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: t => ({ text: t, setMimeType() { return this; } }) },
@@ -104,7 +115,7 @@ function load() {
   const src = fs.readdirSync(dir).filter(f => f.endsWith('.gs')).sort().map(f => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
   vm.runInContext(src + '\nthis.resetHeaders = () => { Object.keys(HEADERS_CHECKED_).forEach(k => delete HEADERS_CHECKED_[k]); };\nthis.__perms = { all: PERMS, staff: STAFF_PERMS };\nthis.__t = { term_, validEik_, safeCell_, readCell_, luhn_, holidays_, DOC_TYPES, REFUSAL, GROUNDS };', ctx, { filename: 'apps-script.js' });
   return {
-    ctx, books, mails, props,
+    ctx, books, mails, props, files, folders,
     setup: () => ctx.setup(),
     call: (action, data, token) => JSON.parse(JSON.stringify(ctx.dispatch_({ action, data, token }))),
     advance: ms => { clockOffset += ms; },

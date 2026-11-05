@@ -93,7 +93,8 @@ function caseGet_(d, ctx) {
   return {
     case: withDue_(c, todayIso_()),
     events: read_(ss, 'events').filter(e => e.regNo === c.regNo).map(e => { delete e._row; return e; }).reverse(),
-    docs: publicRows_(read_(ss, 'docs').filter(x => x.regNo === c.regNo)).reverse()
+    docs: publicRows_(read_(ss, 'docs').filter(x => x.regNo === c.regNo)).reverse(),
+    files: filesOf_(ss, 'case', c.regNo), courts: courtsOfCase_(ss, c.regNo), space: spaceInfo_(ss)
   };
 }
 
@@ -101,7 +102,7 @@ function caseFields_(d) {
   const v = {
     kind: oneOf_(d.kind, CASE_KIND, 'Вид заявление'), regDate: isoDate_(d.regDate), channel: oneOf_(d.channel, CASE_CHANNEL, 'Начин на подаване'),
     applicantType: oneOf_(d.applicantType, APPLICANT_TYPE, 'Вид заявител'), applicantName: line_(d.applicantName, 200), applicantSeat: line_(d.applicantSeat, 120), applicantOblast: line_(d.applicantOblast, 80),
-    applicantAddress: line_(d.applicantAddress, 300), applicantEmail: line_(d.applicantEmail, 200), applicantPhone: line_(d.applicantPhone, 40),
+    applicantAddress: line_(d.applicantAddress, 300), applicantEmail: line_(d.applicantEmail, 200), applicantPhone: line_(d.applicantPhone, 40), applicantEik: line_(d.applicantEik, 13),
     subject: str_(d.subject, 8000), form: line_(d.form, 300), noPublish: d.noPublish === true || d.noPublish === 'Да' ? 'Да' : 'Не', owner: line_(d.owner, 40)
   };
   if (!v.regDate) fail_('required', 'Посочете дата на регистриране.');
@@ -109,6 +110,7 @@ function caseFields_(d) {
   if (!v.subject) fail_('required', 'Опишете исканата информация (чл. 25, ал. 1, т. 2).');
   if (!v.applicantAddress && !v.applicantEmail) fail_('required', 'Посочете адрес или имейл за кореспонденция (чл. 25, ал. 1, т. 4).');
   if (v.applicantEmail && !isEmail_(v.applicantEmail)) fail_('email', 'Невалиден имейл на заявителя.');
+  if (v.applicantEik && !validEik_(v.applicantEik)) fail_('eik', 'Невалиден ЕИК/БУЛСТАТ на заявителя.');
   return v;
 }
 
