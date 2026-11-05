@@ -80,6 +80,9 @@ function actions_() {
     'op.org.save': { auth: 'op', write: true, fn: opOrgSave_ },
     'op.signer.save': { auth: 'op', write: true, fn: opSignerSave_ },
     'op.ground.save': { auth: 'op', write: true, fn: opGroundSave_ },
+    'op.addressees': { auth: 'op', fn: opAddressees_ },
+    'op.addressee.save': { auth: 'op', write: true, fn: opAddresseeSave_ },
+    'op.addressee.delete': { auth: 'op', write: true, fn: opAddresseeDelete_ },
     'op.user.save': { auth: 'op', write: true, fn: opUserSave_ },
     'op.user.password': { auth: 'op', write: true, fn: opUserPassword_ },
     'op.log': { auth: 'op', fn: opLog_ }

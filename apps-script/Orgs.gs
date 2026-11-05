@@ -351,6 +351,26 @@ function addresseesDelete_(d, ctx) {
   return {};
 }
 
+/* операторът вижда и променя всички адресати на избраната организация */
+const opAddresseeCtx_ = ctx => ({ perms: { casesAll: true }, username: opActor_(ctx) });
+
+function opAddressees_(d, ctx) {
+  const reg = regOrg_(d.no);
+  return { no: reg.no, name: reg.name, addressees: addresseesOf_(orgSheet_(reg), opAddresseeCtx_(ctx)) };
+}
+
+function opAddresseeSave_(d, ctx) {
+  const reg = regOrg_(d.no), r = saveAddressee_(orgSheet_(reg), d, opAddresseeCtx_(ctx));
+  audit_(master_(), ctx.username, 'Адресат в организация', reg.no, r.id);
+  return r;
+}
+
+function opAddresseeDelete_(d, ctx) {
+  const reg = regOrg_(d.no), r = addresseesDelete_(d, Object.assign(opAddresseeCtx_(ctx), { ss: () => orgSheet_(reg) }));
+  audit_(master_(), ctx.username, 'Изтрит адресат в организация', reg.no, str_(d.id, 24));
+  return r;
+}
+
 /* новата преписка може да запише заявителя и в адресатите */
 function caseCreateWithAddressee_(d, ctx) {
   const r = caseCreate_(d, ctx);

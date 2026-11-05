@@ -417,14 +417,14 @@ function themePicker() {
 const logoEl = mini => h('span', { class: 'logo-plate' + (mini ? ' mini' : '') }, h('img', { src: 'assets/logo-site.png', alt: 'ЗДОИ4You' }));
 
 function gate(card, wide) {
-  $app().replaceChildren(h('div', { class: 'gate' }, logoEl(false), h('div', { class: 'card gate-card' + (wide ? ' wide' : '') }, card), h('div', { class: 'gate-foot' }, themePicker(), h('a', { href: 'https://zdoi4you.eu', rel: 'noopener' }, 'zdoi4you.eu'), h('span', null, 'Поддръжка: ', supportLink()))));
+  $app().replaceChildren(h('div', { class: 'gate' }, h('a', { href: '#/home', 'aria-label': 'Начална страница' }, logoEl(false)), h('div', { class: 'card gate-card' + (wide ? ' wide' : '') }, card), h('div', { class: 'gate-foot' }, themePicker(), h('a', { href: 'https://zdoi4you.eu', rel: 'noopener' }, 'zdoi4you.eu'), h('span', null, 'Поддръжка: ', supportLink()))));
   window.scrollTo(0, 0);
 }
 
 function shell() {
   const me = session.me;
   const tabs = me.operator
-    ? [['#/op/apps', 'Заявки за регистрация'], ['#/op/changes', 'Заявки за промяна'], ['#/op/orgs', 'Организации'], ['#/op/plans', 'Планове'], ['#/op/log', 'Дневник'], ['#/me', 'Моят профил']]
+    ? [['#/op/apps', 'Заявки за регистрация'], ['#/op/changes', 'Заявки за промяна'], ['#/op/orgs', 'Организации'], ['#/op/addressees', 'Адресати'], ['#/op/plans', 'Планове'], ['#/op/log', 'Дневник'], ['#/me', 'Моят профил']]
     : [['#/', 'Табло'], ['#/cases', 'Преписки'], ['#/addressees', 'Адресати'], ['#/docs', 'Документи']]
       .concat(can('reports') ? [['#/reports', 'Отчети']] : [], [['#/art15', 'Чл. 15'], ['#/org', 'Организация']])
       .concat(me.role === 'Администратор' ? [['#/users', 'Потребители']] : [], can('log') ? [['#/log', 'Дневник']] : [], [['#/me', 'Моят профил']]);
@@ -463,6 +463,64 @@ async function boot() {
 
 /* ---------- публични страници ---------- */
 
+const HOME_FEATURES = [
+  ['Преписки и срокове', 'Регистър на заявленията със сроковете по чл. 28–31 ЗДОИ, включително за трети лица. Срок, който изтича в неработен ден, се мести на следващия работен.'],
+  ['Писма и решения в PDF', 'Уточняване, удължаване, препращане, решения за достъп, частичен достъп и отказ, протокол и писма до трети лица.'],
+  ['Мотиви и преглед', 'Решенията имат поле за мотиви. Преди генериране всеки абзац може да се промени или изтрие и да се добави текст.'],
+  ['Правни основания', 'Основания от ЗДОИ за всеки вид акт, собствени основания на организацията и текст само за конкретния документ.'],
+  ['Съд по адреса на адресата', 'За всяко решение съдът се предлага според областта от адреса и може да се коригира от списъка с административните съдилища.'],
+  ['Адресати и адреси', 'Запазени адресати и пълни адреси от списък: област, община, населено място, район, улица и пощенски код. Всичко може да се въведе и ръчно.'],
+  ['Отчети и чл. 15', 'Годишен отчет по чл. 15, ал. 2 със статистика по вид заявител, резултат и причини за отказ, и информацията по чл. 15.'],
+  ['Упълномощени лица', 'Лицата по чл. 28, ал. 2 се въвеждат с акта за определяне и срока му и се избират при издаване на документ.'],
+  ['Потребители и права', 'Администратори и служители с настройваеми права: всички или само своите преписки, писма, решения, отчети, дневник.']
+];
+const HOME_SECURITY = [
+  ['Отделни данни', 'Всяка организация има собствена Google таблица, която не се споделя с други организации.'],
+  ['Пароли', 'Паролата се обработва в браузъра и не се изпраща към сървъра в чист вид.'],
+  ['Без данни за вход по имейл', 'Номерът на организацията, паролите и връзките за парола се показват само на екрана и се предават лично.'],
+  ['Дневник', 'Входовете и важните действия се записват в дневника на организацията.']
+];
+
+function viewHome() {
+  const applyBtn = h('a', { class: 'btn', href: '#/apply' }, 'Заявка за регистрация');
+  const closedNote = h('p', { class: 'small muted', hidden: true }, 'В момента не приемаме нови заявки за регистрация.');
+  if (!session) api('public.config').then(c => { if (!c.applyOpen) { applyBtn.remove(); closedNote.hidden = false; } }).catch(() => {});
+  const enter = session
+    ? h('a', { class: 'btn primary', href: session.me.operator ? '#/op/apps' : '#/' }, 'Към платформата')
+    : h('a', { class: 'btn primary', href: '#/login' }, 'Вход');
+  $app().replaceChildren(h('div', { class: 'home' },
+    h('header', { class: 'home-top' }, h('div', { class: 'home-wrap home-bar' }, logoEl(true), h('div', { class: 'actions' }, themePicker(), enter))),
+    h('main', { class: 'home-wrap' },
+      h('section', { class: 'hero' },
+        h('h1', null, 'Работата по ЗДОИ на едно място'),
+        h('p', { class: 'hero-sub' }, 'Платформа за общини, администрации и юридически лица, задължени по Закона за достъп до обществена информация. Водите преписките, следите сроковете и издавате документите си в PDF.'),
+        h('div', { class: 'actions' }, session ? enter.cloneNode(true) : [h('a', { class: 'btn primary', href: '#/login' }, 'Вход'), applyBtn]),
+        closedNote),
+      h('section', { 'aria-labelledby': 'home-features' },
+        h('h2', { id: 'home-features' }, 'Какво можете да правите'),
+        h('div', { class: 'home-grid' }, HOME_FEATURES.map(([t, d]) => h('div', { class: 'card' }, h('h3', null, t), h('p', { class: 'small muted' }, d))))),
+      h('section', { 'aria-labelledby': 'home-steps' },
+        h('h2', { id: 'home-steps' }, 'Как започвате'),
+        h('ol', { class: 'home-steps' },
+          h('li', null, h('b', null, 'Подавате заявка.'), ' Въвеждате данните на организацията, определяте администратор на профила и избирате парола.'),
+          h('li', null, h('b', null, 'Екипът я проверява.'), ' След одобрение организацията получава собствена таблица с данни.'),
+          h('li', null, h('b', null, 'Влизате и работите.'), ' Входът е с номер на организацията, потребителско име и парола. Администраторът добавя служителите.'))),
+      h('section', { 'aria-labelledby': 'home-security' },
+        h('h2', { id: 'home-security' }, 'Данни и сигурност'),
+        h('div', { class: 'home-grid' }, HOME_SECURITY.map(([t, d]) => h('div', { class: 'card' }, h('h3', null, t), h('p', { class: 'small muted' }, d))))),
+      h('p', { class: 'note' }, 'Шаблоните на документите са сверени с текста на ЗДОИ, но не заменят преценката на юрист.')),
+    h('footer', { class: 'home-wrap home-foot small muted' },
+      h('span', null, 'Поддръжка: ', supportLink()),
+      h('a', { href: 'https://zdoi4you.eu', rel: 'noopener' }, 'zdoi4you.eu'))));
+  window.scrollTo(0, 0);
+}
+
+function notFoundBody() {
+  return [h('h1', null, 'Страницата не е намерена'),
+    h('p', { class: 'muted' }, 'Адресът е грешен или страницата вече не съществува.'),
+    h('div', { class: 'gate-links' }, h('a', { href: '#/home' }, 'Начална страница'), h('a', { href: session ? (session.me.operator ? '#/op/apps' : '#/') : '#/login' }, session ? 'Към платформата' : 'Вход'))];
+}
+
 function viewLogin(prefill) {
   const no = (prefill && prefill.no) || '', username = (prefill && prefill.username) || '';
   const applyLink = h('a', { href: '#/apply' }, 'Регистрация на организация');
@@ -485,7 +543,7 @@ function viewLogin(prefill) {
     h('h1', null, 'Вход в платформата'),
     h('p', { class: 'muted' }, 'Платформа за задължените лица по ЗДОИ'),
     form,
-    h('div', { class: 'gate-links' }, h('a', { href: '#/forgot' }, 'Забравена парола'), applyLink)
+    h('div', { class: 'gate-links' }, h('a', { href: '#/home' }, 'Начална страница'), h('a', { href: '#/forgot' }, 'Забравена парола'), applyLink)
   ]);
 }
 
@@ -950,10 +1008,8 @@ function replaceAddress(form, def, value, ctx) {
   form.querySelector('[name="' + def.k + '"]').closest('.addr').replaceWith(addressField(def, value, null, ctx));
 }
 
-async function viewAddressees() {
-  Store.boot = null;
-  const b = await boot(), rows = b.addressees, canEdit = can('casesEdit');
-  const reload = () => viewAddressees().catch(showError);
+/* една и съща страница за организацията и за оператора; различават се само извикванията към сървъра */
+function addresseesPage({ rows, canEdit, save, del, reload, before }) {
   const edit = a => {
     const form = h('form', null, h('h2', null, a ? 'Промяна на адресат' : 'Нов адресат'), h('div', { class: 'form-grid' },
       fieldEl({ k: 'type', label: 'Вид', type: 'select', options: ADDRESSEE_TYPE, req: true }, a ? a.type : ADDRESSEE_TYPE[0]),
@@ -966,7 +1022,7 @@ async function viewAddressees() {
     const dlg = h('dialog', { class: 'wide' }, form);
     dlg.addEventListener('close', () => dlg.remove());
     submitter(form, async d => {
-      const r = await api('addressees.save', Object.assign(d, { id: a ? a.id : '' }));
+      const r = await save(Object.assign(d, { id: a ? a.id : '' }));
       dlg.close();
       toast(r.existed ? 'Този адресат вече е в списъка.' : 'Записано.');
       reload();
@@ -975,7 +1031,7 @@ async function viewAddressees() {
   };
   const remove = (a, btn) => {
     if (!window.confirm('Да се изтрие ли адресатът „' + a.name + '“? Издадените документи и преписките не се променят.')) return;
-    withBusy(btn, async () => { await api('addressees.delete', { id: a.id }); toast('Адресатът е изтрит.'); reload(); });
+    withBusy(btn, async () => { await del(a.id); toast('Адресатът е изтрит.'); reload(); });
   };
   const q = h('input', { type: 'search', placeholder: 'Търсене по име, адрес или имейл', 'aria-label': 'Търсене' });
   const box = h('div', { class: 'table-wrap' });
@@ -992,9 +1048,45 @@ async function viewAddressees() {
   };
   q.addEventListener('input', draw);
   draw();
-  setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Адресати'), h('p', { class: 'muted small' }, 'Запазени заявители, трети лица и органи. Избират се при нова преписка и в писмата, а данните винаги могат да се въведат и ръчно. Пазете само адресати, за които имате нужда, защото това са лични данни.')),
+  return [h('div', { class: 'head' }, h('div', null, h('h1', null, 'Адресати'), h('p', { class: 'muted small' }, 'Запазени заявители, трети лица и органи. Въвеждат се и се редактират тук, независимо от преписките. Избират се при нова преписка и в писмата, а данните винаги могат да се въведат и ръчно. Пазете само адресати, за които имате нужда, защото това са лични данни.')),
     canEdit ? h('button', { class: 'btn primary', onclick: () => edit(null) }, '+ Нов адресат') : null),
-    h('div', { class: 'card' }, h('div', { class: 'filters' }, q), box));
+    before || null,
+    h('div', { class: 'card' }, h('div', { class: 'filters' }, q), box)];
+}
+
+async function viewAddressees() {
+  Store.boot = null;
+  const b = await boot();
+  setView(addresseesPage({
+    rows: b.addressees, canEdit: can('casesEdit'), save: d => api('addressees.save', d), del: id => api('addressees.delete', { id }),
+    reload: () => viewAddressees().catch(showError)
+  }));
+}
+
+/* оператор: адресатите принадлежат на организация, затова първо се избира тя */
+async function viewOpAddressees(no) {
+  const { orgs } = await api('op.orgs');
+  const selected = no || (orgs.length === 1 ? orgs[0].no : '');
+  if (!orgs.length) {
+    setView(h('div', { class: 'head' }, h('h1', null, 'Адресати')), h('div', { class: 'card stack' },
+      h('p', { class: 'muted' }, 'Адресатите се пазят към организация, а още няма одобрени организации.'),
+      h('div', null, h('a', { class: 'btn primary', href: '#/op/new' }, '+ Добави организация'))));
+    return;
+  }
+  const sel = h('select', { 'aria-label': 'Организация', onchange: e => { location.hash = '#/op/addressees/' + e.target.value; } },
+    h('option', { value: '' }, 'Изберете организация…'), orgs.map(o => h('option', { value: o.no }, o.no + ' – ' + o.name)));
+  sel.value = selected;
+  const picker = h('div', { class: 'card' }, h('label', { class: 'field' }, h('span', null, 'Организация'), sel));
+  if (!selected) {
+    setView(h('div', { class: 'head' }, h('h1', null, 'Адресати')), picker);
+    return;
+  }
+  const r = await api('op.addressees', { no: selected });
+  setView(addresseesPage({
+    rows: r.addressees, canEdit: true, before: [picker, h('br')],
+    save: d => api('op.addressee.save', Object.assign(d, { no: selected })), del: id => api('op.addressee.delete', { no: selected, id }),
+    reload: () => viewOpAddressees(selected).catch(showError)
+  }));
 }
 
 /* ---------- организация, потребители ---------- */
@@ -1324,7 +1416,7 @@ async function viewOpOrg(no) {
           h('td', { class: 'mono small' }, fmtTime(u.lastLogin)),
           h('td', { class: 'right' }, h('div', { class: 'actions' }, h('button', { class: 'btn sm', onclick: () => userDialog(u, d => api('op.user.save', Object.assign(d, { no })), reload) }, 'Промени'), gen)));
       }))));
-  setView(h('div', { class: 'head' }, h('div', null, h('p', { class: 'small' }, h('a', { href: '#/op/orgs' }, '← Всички организации')), h('h1', null, r.profile.name), h('p', { class: 'muted small' }, 'Номер на организацията: ', h('b', { class: 'mono' }, no))), h('span', { class: 'pill ' + (r.status === 'Активна' ? 'ok' : 'bad') }, r.status)),
+  setView(h('div', { class: 'head' }, h('div', null, h('p', { class: 'small' }, h('a', { href: '#/op/orgs' }, '← Всички организации')), h('h1', null, r.profile.name), h('p', { class: 'muted small' }, 'Номер на организацията: ', h('b', { class: 'mono' }, no))), h('div', { class: 'actions' }, h('a', { class: 'btn sm', href: '#/op/addressees/' + no }, 'Адресати'), h('span', { class: 'pill ' + (r.status === 'Активна' ? 'ok' : 'bad') }, r.status))),
     h('div', { class: 'stack' }, users, planForm, signersCard(r.signers, true, d => api('op.signer.save', Object.assign(d, { no })), reload),
       groundsCard(r.grounds, true, d => api('op.ground.save', Object.assign(d, { no })), reload), form));
 }
@@ -1363,13 +1455,18 @@ function showError(e) {
   setView(h('div', { class: 'card' }, h('h2', null, 'Неуспешно зареждане'), h('br'), h('p', { class: 'err' }, e.message), h('br'), h('button', { class: 'btn', onclick: route }, 'Опитай отново')));
 }
 
+const PROTECTED_PAGES = ['cases', 'new', 'case', 'addressees', 'docs', 'reports', 'art15', 'org', 'users', 'log', 'me', 'op'];
+
 async function route() {
   const parts = (location.hash || '#/').slice(2).split('/').map(p => { try { return decodeURIComponent(p); } catch (e) { return ''; } });
   const page = parts[0] || '';
   if (page === 'activate') return viewActivate(parts[1], parts[2], parts[3]);
   if (page === 'apply') return viewApply();
   if (page === 'forgot') return viewForgot();
+  if (page === 'home') return viewHome();
   if (!session) {
+    if (page === '') return viewHome();
+    if (page !== 'login' && !PROTECTED_PAGES.includes(page)) return gate(notFoundBody());
     if (page !== 'login') history.replaceState(null, '', '#/login');
     return viewLogin();
   }
@@ -1384,12 +1481,13 @@ async function route() {
       if (parts[1] === 'changes') return await viewOpChanges();
       if (parts[1] === 'orgs') return await viewOpOrgs();
       if (parts[1] === 'plans') return await viewOpPlans();
+      if (parts[1] === 'addressees') return await viewOpAddressees(parts[2]);
       if (parts[1] === 'org') return await viewOpOrg(parts[2]);
       if (parts[1] === 'new') return viewOpNew();
       if (parts[1] === 'log') return setView(logView((await api('op.log')).log));
       if (parts[0] === 'op' && parts[1] === 'apps') return await viewOpApps();
-      location.hash = '#/op/apps';
-      return;
+      if (page === '' || (page === 'op' && !parts[1])) { location.hash = '#/op/apps'; return; }
+      return setView(h('div', { class: 'card' }, notFoundBody()));
     }
     switch (page) {
       case '': return await viewDash();
@@ -1404,7 +1502,7 @@ async function route() {
       case 'users': return await viewUsers();
       case 'log': return setView(logView((await api('log.list')).log));
       case 'me': return viewMe();
-      default: location.hash = '#/';
+      default: return setView(h('div', { class: 'card' }, notFoundBody()));
     }
   } catch (e) { showError(e); }
 }

@@ -889,3 +889,25 @@ test('notifications carry the support address and reply to it', () => {
   assert.equal(m.replyTo, 'support@platform.zdoi4you.eu');
   assert.ok(m.body.includes('support@platform.zdoi4you.eu'));
 });
+
+test('operator manages addressees of a chosen organization outside cases', () => {
+  const { g, op, a, b } = setupTwo();
+  const data = { no: a.no, type: 'Юридическо лице', name: 'Фирма', address: 'ул. Първа 1' };
+  assert.equal(g.call('op.addressees', { no: a.no }, a.token).error, 'role');
+  assert.equal(g.call('op.addressee.save', data, a.token).error, 'role');
+  assert.equal(g.call('op.addressees', { no: '99999999' }, op).error, 'notfound');
+  const r = g.call('op.addressee.save', data, op);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(g.call('org.bootstrap', {}, a.token).addressees[0].name, 'Фирма', 'организацията го вижда');
+  assert.equal(g.call('org.bootstrap', {}, b.token).addressees.length, 0, 'другата не го вижда');
+  const own = g.call('addressees.save', { type: 'Гражданин', name: 'От организацията', email: 'x@example.org' }, a.token);
+  assert.equal(g.call('op.addressees', { no: a.no }, op).addressees.length, 2, 'операторът вижда всички');
+  assert.equal(g.call('op.addressees', { no: b.no }, op).addressees.length, 0);
+  assert.equal(g.call('op.addressee.save', Object.assign({}, data, { no: b.no, id: r.id }), op).error, 'notfound', 'чужда организация');
+  assert.equal(g.call('op.addressee.save', Object.assign({}, data, { id: r.id, name: 'Фирма 2' }), op).ok, true);
+  assert.ok(g.call('org.bootstrap', {}, a.token).addressees.some(x => x.name === 'Фирма 2'));
+  assert.equal(g.call('op.addressee.delete', { no: b.no, id: own.id }, op).error, 'notfound');
+  assert.equal(g.call('op.addressee.delete', { no: a.no, id: own.id }, op).ok, true);
+  assert.equal(g.call('op.addressees', { no: a.no }, op).addressees.length, 1);
+  assert.ok(g.call('log.list', {}, a.token).log.some(l => l.action === 'Изтрит адресат' && /оператор/.test(l.actor)), 'записано в дневника на организацията');
+});

@@ -25,7 +25,7 @@ function start(port) {
     if (url.pathname === '/__mails') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(g.mails)); return; }
     const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     const file = path.normalize(path.join(root, rel));
-    if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end('404'); return; }
+    if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { 'Content-Type': types['.html'] }); res.end(fs.readFileSync(path.join(root, '404.html'))); return; }
     let data = fs.readFileSync(file);
     if (rel === 'js/config.js') data = Buffer.from("window.PLATFORM_API = '/__api';\n");
     res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' });
