@@ -1180,3 +1180,39 @@ test('signing method is limited to the known values and kept with the document',
   const r = send('electronic');
   assert.equal(g.call('doc.get', { id: r.id }, a.token).payload.f.signMode, 'electronic');
 });
+
+test('leading zeros survive everywhere, including columns added to older sheets', () => {
+  const { g, op, a } = setupTwo();
+  const ZERO = '000696327';
+  const orgBook = () => [...g.books.values()].find(x => x.name.includes(a.no));
+  // старо състояние: лист без колона за ЕИК, както е създаден преди добавянето ѝ
+  const old = orgBook().getSheetByName('Адресати');
+  assert.ok(old === null || old.getLastRow() <= 1);
+  const r0 = g.call('addressees.save', { type: 'Юридическо лице', name: 'Фирма', address: 'ул. А', eik: ZERO, phone: '0888123456' }, a.token);
+  assert.equal(r0.ok, true, JSON.stringify(r0));
+  assert.equal(g.call('org.bootstrap', {}, a.token).addressees[0].eik, ZERO, 'нов запис');
+  assert.equal(g.call('org.bootstrap', {}, a.token).addressees[0].phone, '0888123456');
+  const c = g.call('case.create', caseData({ applicantType: 'Юридическо лице', applicantEik: ZERO, applicantPhone: '0888000111' }), a.token);
+  const got = g.call('case.get', { regNo: c.regNo }, a.token).case;
+  assert.equal(got.applicantEik, ZERO);
+  assert.equal(got.applicantPhone, '0888000111');
+  assert.equal(g.call('op.org.get', { no: a.no }, op).profile.eik, '000696327', 'профил');
+  // колона, останала без формат: загубените нули се връщат при първото отваряне
+  const s = orgBook().getSheetByName('Адресати');
+  const col = 11;
+  s.formats = [{ r: 1, c: 1, nr: 1000, nc: col - 1 }];
+  s.cells[1][col - 1] = 695114;
+  g.ctx.resetHeaders();
+  assert.equal(s.getRange(2, col).getNumberFormat(), '0');
+  assert.equal(g.call('org.bootstrap', {}, a.token).addressees[0].eik, '000695114', 'загубените нули са възстановени');
+  assert.equal(s.getRange(2, col).getNumberFormat(), '@');
+  assert.equal(s.cells[1][col - 1], '000695114', 'и в самата таблица');
+  const again = g.call('addressees.save', { id: r0.id, type: 'Юридическо лице', name: 'Фирма', address: 'ул. А', eik: ZERO }, a.token);
+  assert.equal(again.ok, true);
+  assert.equal(g.call('org.bootstrap', {}, a.token).addressees[0].eik, ZERO, 'следващите записи са текст');
+  // дълъг номер
+  s.formats = [{ r: 1, c: 1, nr: 1000, nc: col - 1 }];
+  s.cells[1][col - 1] = 12345678901;
+  g.ctx.resetHeaders();
+  assert.equal(g.call('org.bootstrap', {}, a.token).addressees[0].eik, '0012345678901');
+});

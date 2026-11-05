@@ -16,22 +16,26 @@ class Range {
     v.forEach((row, i) => row.forEach((x, j) => {
       const R = this.r - 1 + i;
       while (this.sheet.cells.length <= R) this.sheet.cells.push([]);
-      this.sheet.cells[R][this.c - 1 + j] = x;
+      // като при Google: в колона без текстов формат цифрите стават число и водещите нули се губят
+      this.sheet.cells[R][this.c - 1 + j] = !this.sheet.isText(this.r + i, this.c + j) && typeof x === 'string' && /^\d+$/.test(x) ? Number(x) : x;
     }));
     return this;
   }
-  setNumberFormat() { return this; }
+  setNumberFormat(f) { if (f === '@') this.sheet.formats.push({ r: this.r, c: this.c, nr: this.nr, nc: this.nc }); return this; }
+  getNumberFormat() { return this.sheet.isText(this.r, this.c) ? '@' : '0'; }
 }
 /* същите ограничения като при Google: 1000 реда и 26 колони, извън тях getRange дава грешка */
 class Sheet {
-  constructor(name) { this.name = name; this.cells = []; this.maxRows = 1000; this.maxCols = 26; }
+  constructor(name) { this.name = name; this.cells = []; this.maxRows = 1000; this.maxCols = 26; this.formats = []; }
+  isText(r, c) { return this.formats.some(f => r >= f.r && r < f.r + f.nr && c >= f.c && c < f.c + f.nc); }
   getName() { return this.name; }
   getLastRow() { return this.cells.length; }
   getLastColumn() { return (this.cells[0] || []).length; }
   getMaxRows() { return this.maxRows; }
   getMaxColumns() { return this.maxCols; }
-  insertRowsAfter(after, n) { this.maxRows += n; }
-  insertColumnsAfter(after, n) { this.maxCols += n; }
+  /* новите редове и колони наследяват формата на съседните, както при Google */
+  insertRowsAfter(after, n) { this.formats.filter(f => f.r + f.nr - 1 === after).forEach(f => { f.nr += n; }); this.maxRows += n; }
+  insertColumnsAfter(after, n) { this.formats.filter(f => f.c + f.nc - 1 === after).forEach(f => { f.nc += n; }); this.maxCols += n; }
   getRange(r, c, nr = 1, nc = 1) {
     if (r + nr - 1 > this.maxRows || c + nc - 1 > this.maxCols) throw new Error(`Those rows/columns are out of bounds: ${this.name} ${r},${c},${nr},${nc}`);
     return new Range(this, r, c, nr, nc);

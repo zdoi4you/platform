@@ -34,6 +34,22 @@ const SCHEMA = {
 };
 const ORG_TABLES = ['profile', 'users', 'cases', 'events', 'docs', 'art15', 'counters', 'signers', 'grounds', 'departments', 'addressees', 'courts', 'files', 'logins', 'log'];
 const HEADERS_CHECKED_ = {};
+/* полета с водещи нули; в колона без текстов формат Google ги превръща в числа */
+const EIK_FIELDS_ = { apps: 'eik', orgs: 'eik', cases: 'applicantEik', addressees: 'eik' };
+const textFormat_ = (s, width) => s.getRange(1, 1, s.getMaxRows(), width).setNumberFormat('@');
+
+/* връща водещите нули на вече записани номера: 9 цифри, а при 10 до 12 цифри пълният вид е 13 */
+function repairEik_(s, key) {
+  const field = EIK_FIELDS_[key], last = s.getLastRow();
+  if (!field || last < 2) return;
+  const col = Object.keys(SCHEMA[key][1]).indexOf(field) + 1, range = s.getRange(2, col, last - 1, 1);
+  const padded = range.getValues().map(([v]) => {
+    if (typeof v !== 'number') return [v];
+    const t = String(v);
+    return [t.length <= 9 ? t.padStart(9, '0') : t.padStart(13, '0')];
+  });
+  range.setValues(padded);
+}
 
 const master_ = () => {
   const id = PropertiesService.getScriptProperties().getProperty('MASTER_ID');
@@ -52,13 +68,18 @@ function table_(ss, key) {
     s.getRange(1, 1, 1, head.length).setValues([head]);
     s.setFrozenRows(1);
     // всичко като текст: датите и телефоните не се преобразуват автоматично
-    s.getRange(1, 1, s.getMaxRows(), Math.max(head.length, 1)).setNumberFormat('@');
+    textFormat_(s, head.length);
   } else if (!HEADERS_CHECKED_[ss.getId() + key]) {
     // новите колони се добавят в края на вече създадените таблици
     const head = Object.values(def[1]), have = s.getLastColumn();
     if (have < head.length) {
       if (s.getMaxColumns() < head.length) s.insertColumnsAfter(s.getMaxColumns(), head.length - s.getMaxColumns());
       s.getRange(1, have + 1, 1, head.length - have).setValues([head.slice(have)]);
+    }
+    // колона, добавена в края от по-стара версия, може да е останала без текстов формат
+    if (s.getRange(2, head.length).getNumberFormat() !== '@') {
+      textFormat_(s, head.length);
+      repairEik_(s, key);
     }
   }
   HEADERS_CHECKED_[ss.getId() + key] = true;
