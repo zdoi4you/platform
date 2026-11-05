@@ -271,9 +271,8 @@ dialog .actions { justify-content: flex-end; margin-top: 16px; }
 
 /* лента със статуса на системите */
 .sysbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 12px; font-size: 13px; font-weight: 500; text-decoration: none; color: var(--ink); background: var(--gray-bg); border-radius: 8px; }
-.top > .sysbar { border-radius: 0; padding-inline: 16px; }
-.gate > .sysbar { margin-bottom: 12px; max-width: 460px; }
-.home-top .sysbar { margin-bottom: 8px; }
+.app-foot .sysbar { margin-bottom: 8px; }
+.gate .sysbar { margin-top: 12px; max-width: 460px; }
 .sysbar.ok { background: var(--ok-bg); color: var(--ok); }
 .sysbar.warn { background: var(--warn-bg); color: var(--warn); }
 .sysbar.bad { background: var(--bad-bg); color: var(--bad); }
@@ -289,3 +288,13 @@ dialog .actions { justify-content: flex-end; margin-top: 16px; }
   body.noprint::before { content: "Печатът на съдържанието на платформата е забранен. За печат изтеглете PDF на документа."; display: block; padding: 40px; color: #000; background: #fff; font-size: 16px; }
 }
 .third > .pill { align-self: flex-start; }
+
+/* воден знак върху съдържанието зад входа; не пречи на кликовете */
+.wm { position: fixed; inset: 0; z-index: 15; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 80px 60px; padding: 20px; overflow: hidden; pointer-events: none; user-select: none; color: var(--ink); opacity: .1; font-size: 12px; }
+.wm span { white-space: nowrap; transform: rotate(-24deg); }
+@media print { .wm { display: none; } }
+
+/* скрито съдържание при опит за снимка и при неактивен прозорец */
+body.noprint.shield > * { opacity: 0 !important; pointer-events: none; }
+body.noprint.shield { background: var(--bg); }
+body.noprint.shield::after { content: "Съдържанието е скрито, докато прозорецът не е активен. Кликнете тук, за да продължите."; position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; color: var(--ink); font-size: 16px; }

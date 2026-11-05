@@ -467,9 +467,16 @@ function themePicker() {
 }
 const logoEl = mini => h('span', { class: 'logo-plate' + (mini ? ' mini' : '') }, h('img', { src: 'assets/logo-site.png', alt: 'ЗДОИ4You' }));
 
-function gate(card, wide) {
-  $app().replaceChildren(h('div', { class: 'gate' }, h('a', { href: '#/home', 'aria-label': 'Начална страница' }, logoEl(false)), statusBar(), h('div', { class: 'card gate-card' + (wide ? ' wide' : '') }, card), h('div', { class: 'gate-foot' }, themePicker(), h('a', { href: 'https://zdoi4you.eu', rel: 'noopener' }, 'zdoi4you.eu'), h('span', null, 'Поддръжка: ', supportLink())), h('p', { class: 'small muted gate-maint' }, MAINTAINER)));
+function gate(card, wide, withStatus) {
+  $app().replaceChildren(h('div', { class: 'gate' }, h('a', { href: '#/home', 'aria-label': 'Начална страница' }, logoEl(false)), h('div', { class: 'card gate-card' + (wide ? ' wide' : '') }, card), h('div', { class: 'gate-foot' }, themePicker(), h('a', { href: 'https://zdoi4you.eu', rel: 'noopener' }, 'zdoi4you.eu'), h('span', null, 'Поддръжка: ', supportLink())), withStatus ? statusBar() : null, h('p', { class: 'small muted gate-maint' }, MAINTAINER)));
   window.scrollTo(0, 0);
+}
+
+/* воден знак: снимка на екрана или с телефон остава проследима до потребителя и часа */
+function watermark() {
+  const me = session.me, now = new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Sofia' }).replace(' ', 'T');
+  const text = `${me.name || me.username} · ${me.username} · № ${me.no} · ${fmtTime(now)}`;
+  return h('div', { class: 'wm', 'aria-hidden': 'true' }, Array.from({ length: 60 }, () => h('span', null, text)));
 }
 
 function shell() {
@@ -489,10 +496,10 @@ function shell() {
         h('span', { id: 'timer', class: 'timer', title: 'Оставащо време на сесията' }),
         h('button', { class: 'btn sm', onclick: () => extendSession().catch(e => toast(e.message)) }, 'Удължи'),
         themePicker(),
-        h('button', { class: 'btn sm', onclick: logout }, 'Изход'))),
-      statusBar()),
+        h('button', { class: 'btn sm', onclick: logout }, 'Изход')))),
     h('main', { id: 'view' }, h('p', { class: 'loading' }, 'Зареждане…')),
-    h('footer', { class: 'app-foot small muted' }, MAINTAINER, ' Поддръжка: ', supportLink()));
+    h('footer', { class: 'app-foot small muted' }, statusBar(), h('p', null, MAINTAINER, ' Поддръжка: ', supportLink())),
+    watermark());
   startTimer();
   if (!me.operator) boot().catch(() => {});
 }
@@ -561,7 +568,7 @@ function viewLogin(prefill) {
     h('p', { class: 'muted' }, 'Платформа за задължените лица по ЗДОИ'),
     form,
     h('div', { class: 'gate-links' }, h('a', { href: '#/home' }, 'Начална страница'), h('a', { href: '#/forgot' }, 'Забравена парола'), applyLink)
-  ]);
+  ], false, true);
 }
 
 /* обратно броене; спира само, когато елементът вече не е на страницата */
@@ -2312,6 +2319,8 @@ async function route() {
   markTab();
   document.getElementById('view').replaceChildren(h('p', { class: 'loading' }, 'Зареждане…'));
   refreshStatusBar();
+  const mark = document.querySelector('#app > .wm');
+  if (mark) mark.replaceWith(watermark());
   try {
     if (page === 'status') return await viewStatus();
     if (session.me.operator) {
@@ -2354,13 +2363,50 @@ async function route() {
   } catch (e) { showError(e); }
 }
 
-/* Ctrl+P зад входа; при печат от менюто на браузъра стиловете скриват съдържанието */
+/*
+ * Защита на съдържанието зад входа. Уеб страница не може да забрани екранна снимка: тя се прави от операционната система.
+ * Затова съдържанието се скрива, щом браузърът усети клавиш за снимка или загуби фокуса, а водният знак прави останалите снимки проследими.
+ */
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || '');
+let shieldTimer;
+const shieldOn = () => { clearTimeout(shieldTimer); document.body.classList.add('shield'); };
+const shieldOff = () => { clearTimeout(shieldTimer); document.body.classList.remove('shield'); };
+/* скрива за кратко; ако междувременно фокусът е загубен, остава скрито до връщането му */
+function shieldFor(ms) {
+  shieldOn();
+  shieldTimer = setTimeout(() => { if (document.hasFocus() && !document.hidden) shieldOff(); }, ms);
+}
+const inside = () => document.body.classList.contains('noprint');
+const SHOT_MSG = 'Екранните снимки на съдържанието са забранени.';
 window.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyP' || String(e.key).toLowerCase() === 'p') && document.body.classList.contains('noprint')) {
+  if (!inside()) return;
+  const key = String(e.key).toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyP' || key === 'p')) {
     e.preventDefault();
     e.stopImmediatePropagation();
     toast('Печатът от екрана е забранен. За печат изтеглете PDF на документа.');
+    return;
   }
+  // снимка от браузъра (Ctrl+Shift+S) и клавиши на системата: Win+Shift+S, Cmd+Shift+3/4/5
+  if (e.ctrlKey && e.shiftKey && (e.code === 'KeyS' || key === 's')) { e.preventDefault(); e.stopImmediatePropagation(); shieldFor(3000); toast(SHOT_MSG); return; }
+  if (e.code === 'PrintScreen' || (IS_MAC ? e.metaKey && e.shiftKey : e.key === 'Meta')) shieldFor(3000);
 }, true);
+/* Windows съобщава за Print Screen едва след снимката, затова изображението в клипборда се заменя */
+window.addEventListener('keyup', e => {
+  if (e.code !== 'PrintScreen' || !inside()) return;
+  shieldFor(3000);
+  toast(SHOT_MSG);
+  if (navigator.clipboard) navigator.clipboard.writeText(SHOT_MSG).catch(() => {});
+}, true);
+window.addEventListener('blur', shieldOn);
+window.addEventListener('focus', () => shieldFor(300));
+document.addEventListener('visibilitychange', () => { if (document.hidden) shieldOn(); else if (document.hasFocus()) shieldFor(300); });
+/* предпазва от останало скрито съдържание, ако браузърът не съобщи за върнатия фокус */
+window.addEventListener('pointerdown', () => { if (document.hasFocus()) shieldOff(); }, true);
+/* диалозите са над страницата, затова получават собствен воден знак */
+new MutationObserver(list => {
+  if (!session) return;
+  list.forEach(m => m.addedNodes.forEach(n => { if (n.nodeName === 'DIALOG') n.append(watermark()); }));
+}).observe(document.body, { childList: true });
 window.addEventListener('hashchange', route);
 route();
