@@ -231,7 +231,11 @@ function msToken_(c) {
       client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer', client_assertion: msAssertion_(c, url)
     }
   });
-  if (r.getResponseCode() !== 200) throw new Error('токен: ' + r.getResponseCode() + ' ' + msError_(r));
+  if (r.getResponseCode() !== 200) {
+    // обяснението на Microsoft съдържа причината и отпечатъка, но не и тайни
+    try { console.error('microsoft: ' + String(JSON.parse(r.getContentText()).error_description || '').split('\n')[0].slice(0, 400)); } catch (_) {}
+    throw new Error('токен: ' + r.getResponseCode() + ' ' + msError_(r));
+  }
   const t = JSON.parse(r.getContentText());
   cache.put('ms:token', t.access_token, Math.max(60, Math.min(21600, (Number(t.expires_in) || 3600) - 300)));
   return t.access_token;

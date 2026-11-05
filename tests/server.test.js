@@ -1372,3 +1372,16 @@ test('a rejected certificate is reported with the Microsoft error code', () => {
   g.setFetch(() => ({ code: 401, body: JSON.stringify({ error: 'invalid_client', error_description: 'AADSTS700027: Client assertion failed signature validation. Trace ID: x' }) }));
   assert.throws(() => g.ctx.msTest(), /токен: 401 invalid_client AADSTS700027$/);
 });
+
+test('the connection check logs public settings and a key checksum, never the key, and always signs in anew', () => {
+  const g = load(); operator(g);
+  microsoft(g, () => ({ code: 202, body: '' }));
+  const logged = [];
+  g.ctx.console.log = m => logged.push(String(m));
+  g.ctx.msTest();
+  g.ctx.msTest();
+  assert.equal(g.fetches.filter(f => f.url.includes('login.microsoftonline.com')).length, 2, 'без запазен токен');
+  const text = logged.join('\n');
+  assert.ok(text.includes('MS_CLIENT_ID: client-id') && /MS_PRIVATE_KEY: \d+ знака, контролна сума [0-9a-f]{16}/.test(text));
+  assert.ok(!text.includes(MS_KEYS.privateKey.split('\n')[1]), 'ключът не излиза в журнала');
+});

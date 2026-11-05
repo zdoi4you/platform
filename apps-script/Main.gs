@@ -199,6 +199,15 @@ function setup() {
 function msTest() {
   const c = msConfig_();
   if (!c) throw new Error('Липсват свойства на скрипта: MS_TENANT, MS_CLIENT_ID, MS_SENDER, MS_PRIVATE_KEY, MS_CERT_SHA256, MS_CERT_SHA1.');
+  // в журнала излизат само публичните стойности; за ключа дължина и контролна сума, не самият ключ
+  const keyBody = String(c.key).replace(/-----[A-Z ]+-----/g, '').replace(/\s+/g, '');
+  console.log('MS_TENANT: ' + c.tenant.trim() + (c.tenant === c.tenant.trim() ? '' : ' (има излишни интервали)'));
+  console.log('MS_CLIENT_ID: ' + c.clientId.trim() + (c.clientId === c.clientId.trim() ? '' : ' (има излишни интервали)'));
+  console.log('MS_SENDER: ' + c.sender.trim() + (c.sender === c.sender.trim() ? '' : ' (има излишни интервали)'));
+  console.log('MS_CERT_SHA256: ' + c.sha256);
+  console.log('MS_CERT_SHA1: ' + c.sha1);
+  console.log('MS_PRIVATE_KEY: ' + keyBody.length + ' знака, контролна сума ' + sha256_(keyBody).slice(0, 16));
+  CacheService.getScriptCache().remove('ms:token'); // проверката винаги минава през истински вход
   const to = String(Session.getEffectiveUser().getEmail());
   msSend_(c, to, 'ЗДОИ4You Платформа – проверка на пощата', 'Връзката с Microsoft 365 работи. Това писмо е изпратено от ' + c.sender + '.');
   console.log('Изпратено от ' + c.sender + ' до ' + to);
