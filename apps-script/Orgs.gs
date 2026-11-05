@@ -71,7 +71,21 @@ function createOrg_(m, data, no, salt, hash, actor, mustChange, ref) {
 
 /* ---------- публична заявка ---------- */
 
+const applyOpen_ = () => PropertiesService.getScriptProperties().getProperty('APPLY_CLOSED') !== '1';
+
+function publicConfig_() {
+  return { applyOpen: applyOpen_() };
+}
+
+function opApplyOpen_(d, ctx) {
+  if (typeof d.open !== 'boolean') fail_('value', 'Невалидна стойност.');
+  PropertiesService.getScriptProperties().setProperty('APPLY_CLOSED', d.open ? '0' : '1');
+  audit_(master_(), ctx.username, d.open ? 'Включени заявки за регистрация' : 'Спрени заявки за регистрация', '', '');
+  return { applyOpen: d.open };
+}
+
 function applyPublic_(d) {
+  if (!applyOpen_()) fail_('closed', 'Заявките за регистрация временно са спрени. За въпроси: ' + CFG.SUPPORT);
   if (d.hp) return { id: 'ok' }; // скрито поле за ботове
   const cache = CacheService.getScriptCache();
   const hour = Number(cache.get('apply:h')) || 0;
@@ -103,11 +117,12 @@ function applyPublic_(d) {
 
 function opApps_() {
   const rows = read_(master_(), 'apps').reverse();
-  return { apps: rows.map(r => { const o = publicRows_([r])[0]; o.data = JSON.parse(r.payload || '{}'); return o; }) };
+  return { applyOpen: applyOpen_(), apps: rows.map(r => { const o = publicRows_([r])[0]; o.data = JSON.parse(r.payload || '{}'); return o; }) };
 }
 
 function opOrgs_() {
-  return { orgs: publicRows_(read_(master_(), 'orgs')).map(o => { delete o.sheetId; return o; }) };
+  const m = master_(), plans = plansOf_(m);
+  return { orgs: publicRows_(read_(m, 'orgs')).map(o => { delete o.sheetId; const p = plans.find(x => x.id === o.plan); o.planName = p ? p.name : ''; return o; }) };
 }
 
 function opLog_() {
@@ -178,7 +193,7 @@ function usersPublic_(ss) {
 
 function opOrgGet_(d, ctx) {
   const org = regOrg_(d.no), book = orgSheet_(org);
-  return { no: org.no, status: org.status, profile: profile_(book), users: usersPublic_(book), signers: signersOf_(book), grounds: groundsOf_(book) };
+  return { no: org.no, status: org.status, plan: org.plan, plans: plansOf_(master_()), profile: profile_(book), users: usersPublic_(book), signers: signersOf_(book), grounds: groundsOf_(book) };
 }
 
 /* ---------- собствени правни основания на организацията ---------- */
@@ -242,6 +257,106 @@ function signersSave_(d, ctx) {
 function opSignerSave_(d, ctx) {
   const reg = regOrg_(d.no), r = saveSigner_(orgSheet_(reg), d, opActor_(ctx));
   audit_(master_(), ctx.username, 'Упълномощено лице в организация', reg.no, line_(d.name, 120));
+  return r;
+}
+
+/* ---------- планове: подготвят се от оператора и още не ограничават нищо ---------- */
+
+const PLAN_STATUS = ['Подготвя се', 'Въведен'];
+const plansOf_ = m => read_(m, 'plans').map(p => { const o = Object.assign({}, p); delete o._row; return o; });
+
+function opPlans_() {
+  return { plans: plansOf_(master_()) };
+}
+
+function opPlanSave_(d, ctx) {
+  const m = master_(), rows = read_(m, 'plans'), id = str_(d.id, 24);
+  const v = { name: line_(d.name, 80), description: str_(d.description, 2000), status: oneOf_(d.status, PLAN_STATUS, 'Състояние') };
+  if (!v.name) fail_('required', 'Напишете наименование на плана.');
+  if (rows.some(p => p.id !== id && p.name.toLowerCase() === v.name.toLowerCase())) fail_('duplicate', 'Вече има план с това наименование.');
+  if (id) {
+    const cur = rows.find(p => p.id === id);
+    if (!cur) fail_('notfound', 'Планът не е намерен.');
+    patch_(m, 'plans', cur._row, v);
+    audit_(m, ctx.username, 'Променен план', v.name, v.status);
+    return { id: id };
+  }
+  const newId = 'p' + randomToken_().slice(0, 15);
+  insert_(m, 'plans', Object.assign({ id: newId, by: ctx.username, at: stamp_() }, v));
+  audit_(m, ctx.username, 'Добавен план', v.name, v.status);
+  return { id: newId };
+}
+
+function opOrgPlan_(d, ctx) {
+  const m = master_(), reg = regOrg_(d.no), plan = str_(d.plan, 24);
+  const p = plan ? plansOf_(m).find(x => x.id === plan) : null;
+  if (plan && !p) fail_('notfound', 'Планът не е намерен.');
+  patch_(m, 'orgs', reg._row, { plan: plan });
+  dropOrgCache_(reg.no);
+  audit_(m, ctx.username, 'Променен план на организация', reg.no, p ? p.name : 'без план');
+  return {};
+}
+
+/* организацията вижда плана си едва когато е въведен */
+function orgPlan_(org) {
+  if (!org.plan) return null;
+  const p = plansOf_(master_()).find(x => x.id === org.plan);
+  return p && p.status === 'Въведен' ? { name: p.name, description: p.description } : null;
+}
+
+/* ---------- адресати: запазени получатели, които се избират вместо ръчно въвеждане ---------- */
+
+const addresseeTypes_ = () => APPLICANT_TYPE.concat('Орган или друга организация');
+/* без право да вижда всички преписки потребителят вижда само въведените от него адресати */
+const seesAddressee_ = (a, ctx) => !!ctx.perms.casesAll || a.by === ctx.username;
+
+function addresseesOf_(ss, ctx) {
+  return read_(ss, 'addressees').filter(a => seesAddressee_(a, ctx)).map(a => { const o = Object.assign({}, a); delete o._row; return o; });
+}
+
+/* в дневника остава само идентификатор, защото адресатите често са физически лица */
+function saveAddressee_(ss, d, ctx) {
+  const v = {
+    type: oneOf_(d.type, addresseeTypes_(), 'Вид'), name: line_(d.name, 200), seat: line_(d.seat, 120), address: line_(d.address, 300),
+    oblast: line_(d.oblast, 80), email: line_(d.email, 200), phone: line_(d.phone, 40)
+  };
+  if (!v.name) fail_('required', 'Напишете име или наименование на адресата.');
+  if (!v.address && !v.email) fail_('required', 'Посочете адрес или имейл на адресата.');
+  if (v.email && !isEmail_(v.email)) fail_('email', 'Невалиден имейл на адресата.');
+  const rows = read_(ss, 'addressees').filter(a => seesAddressee_(a, ctx)), id = str_(d.id, 24);
+  if (id) {
+    const cur = rows.find(a => a.id === id);
+    if (!cur) fail_('notfound', 'Адресатът не е намерен.');
+    patch_(ss, 'addressees', cur._row, v);
+    audit_(ss, ctx.username, 'Променен адресат', id, '');
+    return { id: id };
+  }
+  const same = rows.find(a => a.name === v.name && a.address === v.address && a.email === v.email);
+  if (same) return { id: same.id, existed: true };
+  const newId = 'a' + randomToken_().slice(0, 15);
+  insert_(ss, 'addressees', Object.assign({ id: newId, by: ctx.username, at: stamp_() }, v));
+  audit_(ss, ctx.username, 'Добавен адресат', newId, '');
+  return { id: newId };
+}
+
+function addresseesSave_(d, ctx) {
+  return saveAddressee_(ctx.ss(), d, ctx);
+}
+
+function addresseesDelete_(d, ctx) {
+  const ss = ctx.ss(), id = str_(d.id, 24), cur = read_(ss, 'addressees').find(a => a.id === id && seesAddressee_(a, ctx));
+  if (!cur) fail_('notfound', 'Адресатът не е намерен.');
+  table_(ss, 'addressees').deleteRow(cur._row);
+  audit_(ss, ctx.username, 'Изтрит адресат', id, '');
+  return {};
+}
+
+/* новата преписка може да запише заявителя и в адресатите */
+function caseCreateWithAddressee_(d, ctx) {
+  const r = caseCreate_(d, ctx);
+  if (d.saveAddressee === 'on') {
+    saveAddressee_(ctx.ss(), { type: d.applicantType, name: d.applicantName, seat: d.applicantSeat, address: d.applicantAddress, oblast: d.applicantOblast, email: d.applicantEmail, phone: d.applicantPhone }, ctx);
+  }
   return r;
 }
 
@@ -383,7 +498,7 @@ function orgBootstrap_(d, ctx) {
   const users = read_(ss, 'users').filter(u => u.active === 'Да').map(u => ({ username: u.username, name: u.name }));
   const me = read_(ss, 'users').find(u => u.username === ctx.username);
   return {
-    profile: profile_(ss), users: users, signers: signersOf_(ss), grounds: groundsOf_(ss),
+    profile: profile_(ss), users: users, signers: signersOf_(ss), grounds: groundsOf_(ss), addressees: addresseesOf_(ss, ctx), plan: orgPlan_(ctx.org),
     me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false, perms: permsOf_(me) }
   };
 }

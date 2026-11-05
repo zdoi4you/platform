@@ -19,7 +19,8 @@ const CFG = {
   OPERATOR_NO: '00000000',
   MAX_FAILS: 5,
   FAIL_WINDOW_S: 900,
-  APPLY_PER_HOUR: 30
+  APPLY_PER_HOUR: 30,
+  SUPPORT: 'support@platform.zdoi4you.eu'
 };
 
 const ROLE_ADMIN = 'Администратор', ROLE_STAFF = 'Служител', ROLE_OP = 'Оператор';
@@ -30,6 +31,7 @@ const STAFF_PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports',
 /* auth: public | user (всеки потребител на организация) | admin (администратор на организация) | op (оператор) | any */
 function actions_() {
   return {
+    'public.config': { auth: 'public', fn: publicConfig_ },
     'public.apply': { auth: 'public', write: true, fn: applyPublic_ },
     login: { auth: 'public', write: true, fn: login_ },
     activate: { auth: 'public', write: true, fn: activate_ },
@@ -43,6 +45,8 @@ function actions_() {
     'org.changes': { auth: 'user', fn: orgChanges_ },
     'signers.save': { auth: 'user', perm: 'signers', write: true, fn: signersSave_ },
     'grounds.save': { auth: 'user', perm: 'grounds', write: true, fn: groundsSave_ },
+    'addressees.save': { auth: 'user', perm: 'casesEdit', write: true, fn: addresseesSave_ },
+    'addressees.delete': { auth: 'user', perm: 'casesEdit', write: true, fn: addresseesDelete_ },
     'users.list': { auth: 'admin', fn: usersList_ },
     'users.save': { auth: 'admin', write: true, fn: usersSave_ },
     'users.invite': { auth: 'admin', write: true, fn: usersInvite_ },
@@ -50,7 +54,7 @@ function actions_() {
 
     'case.list': { auth: 'user', fn: caseList_ },
     'case.get': { auth: 'user', fn: caseGet_ },
-    'case.create': { auth: 'user', perm: 'casesEdit', write: true, fn: caseCreate_ },
+    'case.create': { auth: 'user', perm: 'casesEdit', write: true, fn: caseCreateWithAddressee_ },
     'case.update': { auth: 'user', perm: 'casesEdit', write: true, fn: caseUpdate_ },
     'case.comment': { auth: 'user', perm: 'casesEdit', write: true, fn: caseComment_ },
 
@@ -63,6 +67,10 @@ function actions_() {
 
     'op.apps': { auth: 'op', fn: opApps_ },
     'op.decide': { auth: 'op', write: true, fn: opDecide_ },
+    'op.applyOpen': { auth: 'op', write: true, fn: opApplyOpen_ },
+    'op.plans': { auth: 'op', fn: opPlans_ },
+    'op.plan.save': { auth: 'op', write: true, fn: opPlanSave_ },
+    'op.org.plan': { auth: 'op', write: true, fn: opOrgPlan_ },
     'op.orgs': { auth: 'op', fn: opOrgs_ },
     'op.status': { auth: 'op', write: true, fn: opStatus_ },
     'op.changes': { auth: 'op', fn: opChanges_ },
@@ -148,7 +156,7 @@ function setup() {
     props.setProperty('MASTER_ID', masterId);
   }
   const master = SpreadsheetApp.openById(masterId);
-  ['apps', 'orgs', 'ops', 'log', 'counters'].forEach(k => table_(master, k));
+  ['apps', 'orgs', 'ops', 'log', 'counters', 'plans'].forEach(k => table_(master, k));
   dropDefaultSheet_(master);
   const email = String(Session.getEffectiveUser().getEmail() || '').toLowerCase();
   props.setProperty('NOTIFY', props.getProperty('NOTIFY') || email);

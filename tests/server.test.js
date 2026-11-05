@@ -781,3 +781,111 @@ test('honeypot silently drops bots', () => {
   assert.equal(r.ok, true);
   assert.equal(r.id, 'ok');
 });
+
+test('operator can close and reopen registration; closed form refuses but pending work continues', () => {
+  const g = load(), op = operator(g);
+  assert.equal(g.call('public.config').applyOpen, true);
+  const pending = apply(g);
+  assert.equal(pending.ok, true);
+  assert.equal(g.call('op.applyOpen', { open: 'no' }, op).error, 'value');
+  assert.equal(g.call('op.applyOpen', { open: false }).error, 'session');
+  assert.equal(g.call('op.applyOpen', { open: false }, op).applyOpen, false);
+  assert.equal(g.call('public.config').applyOpen, false);
+  assert.equal(apply(g, { eik: '121758615' }).error, 'closed');
+  assert.equal(g.call('op.apps', {}, op).applyOpen, false);
+  assert.equal(g.call('op.decide', { id: pending.id, approve: true }, op).ok, true, 'подадена заявка се решава');
+  const direct = g.call('op.org.create', Object.assign(orgData({ eik: '831902088', name: 'От оператор', adminUsername: 'opadmin' }), { no: newNo(g), hash: HASH('g') }), op);
+  assert.equal(direct.ok, true, 'операторът добавя организации');
+  assert.equal(g.call('op.applyOpen', { open: true }, op).applyOpen, true);
+  assert.equal(apply(g, { eik: '121758615' }).ok, true);
+});
+
+test('organization cannot change registration setting or plans', () => {
+  const { g, a } = setupTwo();
+  assert.equal(g.call('op.applyOpen', { open: false }, a.token).error, 'role');
+  assert.equal(g.call('op.plan.save', { name: 'X', status: 'Въведен' }, a.token).error, 'role');
+  assert.equal(g.call('op.org.plan', { no: a.no, plan: '' }, a.token).error, 'role');
+});
+
+test('plans: visible to the organization only after they are introduced', () => {
+  const { g, op, a, b } = setupTwo();
+  assert.equal(g.call('op.plan.save', { name: '', status: 'Въведен' }, op).error, 'required');
+  assert.equal(g.call('op.plan.save', { name: 'X', status: 'Друго' }, op).error, 'value');
+  const p = g.call('op.plan.save', { name: 'Основен', description: 'Описание', status: 'Подготвя се' }, op);
+  assert.equal(p.ok, true, JSON.stringify(p));
+  assert.equal(g.call('op.plan.save', { name: 'основен', status: 'Въведен' }, op).error, 'duplicate');
+  assert.equal(g.call('op.org.plan', { no: a.no, plan: 'липсва' }, op).error, 'notfound');
+  assert.equal(g.call('op.org.plan', { no: a.no, plan: p.id }, op).ok, true);
+  assert.equal(g.call('org.bootstrap', {}, a.token).plan, null, 'подготвян план не се вижда');
+  assert.equal(g.call('op.org.get', { no: a.no }, op).plan, p.id);
+  assert.equal(g.call('op.orgs', {}, op).orgs.find(o => o.no === a.no).planName, 'Основен');
+  assert.equal(g.call('op.plan.save', { id: p.id, name: 'Основен', description: 'Описание', status: 'Въведен' }, op).ok, true);
+  assert.equal(g.call('org.bootstrap', {}, a.token).plan.name, 'Основен');
+  assert.equal(g.call('org.bootstrap', {}, b.token).plan, null, 'друга организация');
+  assert.equal(g.call('case.create', caseData(), a.token).ok, true, 'планът не ограничава работата');
+});
+
+test('addressees: saved per organization, deduplicated, editable and deleted', () => {
+  const { g, a, b } = setupTwo();
+  const data = { type: 'Гражданин', name: 'Петър Петров', address: 'п.к. 1000, ул. Втора 2', email: '', phone: '0888' };
+  assert.equal(g.call('addressees.save', { type: 'Гражданин', name: '', address: 'x' }, a.token).error, 'required');
+  assert.equal(g.call('addressees.save', { type: 'Гражданин', name: 'Без контакт' }, a.token).error, 'required');
+  assert.equal(g.call('addressees.save', { type: 'Друг', name: 'X', address: 'y' }, a.token).error, 'value');
+  assert.equal(g.call('addressees.save', { type: 'Гражданин', name: 'X', email: 'лош' }, a.token).error, 'email');
+  const r = g.call('addressees.save', data, a.token);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const again = g.call('addressees.save', data, a.token);
+  assert.equal(again.existed, true);
+  assert.equal(again.id, r.id);
+  assert.equal(g.call('org.bootstrap', {}, a.token).addressees.length, 1);
+  assert.equal(g.call('org.bootstrap', {}, b.token).addressees.length, 0, 'друга организация не вижда адресатите');
+  assert.equal(g.call('addressees.save', Object.assign({}, data, { id: r.id }), b.token).error, 'notfound');
+  assert.equal(g.call('addressees.delete', { id: r.id }, b.token).error, 'notfound');
+  assert.equal(g.call('addressees.save', Object.assign({}, data, { id: r.id, name: 'Петър Иванов' }), a.token).ok, true);
+  assert.equal(g.call('org.bootstrap', {}, a.token).addressees[0].name, 'Петър Иванов');
+  const log = g.call('log.list', {}, a.token).log.filter(l => /адресат/i.test(l.action));
+  assert.ok(log.length >= 2);
+  assert.ok(log.every(l => !JSON.stringify(l).includes('Петър')), 'без лични данни в дневника');
+  assert.equal(g.call('addressees.delete', { id: r.id }, a.token).ok, true);
+  assert.equal(g.call('org.bootstrap', {}, a.token).addressees.length, 0);
+  assert.equal(g.call('addressees.delete', { id: r.id }, a.token).error, 'notfound');
+});
+
+test('new case can save the applicant as an addressee only when asked', () => {
+  const { g, a } = setupTwo();
+  assert.equal(g.call('case.create', caseData(), a.token).ok, true);
+  assert.equal(g.call('org.bootstrap', {}, a.token).addressees.length, 0);
+  assert.equal(g.call('case.create', caseData({ saveAddressee: 'on' }), a.token).ok, true);
+  const list = g.call('org.bootstrap', {}, a.token).addressees;
+  assert.equal(list.length, 1);
+  assert.equal(list[0].name, 'Петър Петров');
+  assert.equal(list[0].oblast, 'София (столица)');
+});
+
+test('addressee rights follow the case rights', () => {
+  const { g, a } = setupTwo();
+  const inv = addStaff(g, a.token, 'emp1');
+  g.call('activate', { no: inv[1], username: 'emp1', token: inv[3], hash: HASH('e') });
+  const emp = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
+  const adminOwn = g.call('addressees.save', { type: 'Гражданин', name: 'На администратора', address: 'ул. А 1' }, a.token);
+  const setPerms = perms => assert.equal(g.call('users.save', { username: 'emp1', name: 'Служител', position: 'Експерт', email: 'emp@example.org', role: 'Служител', perms }, a.token).ok, true);
+  assert.equal(g.call('org.bootstrap', {}, emp).addressees.length, 1, 'с право за всички вижда всички');
+  setPerms(['casesEdit']);
+  assert.equal(g.call('org.bootstrap', {}, emp).addressees.length, 0, 'само своите');
+  assert.equal(g.call('addressees.save', { id: adminOwn.id, type: 'Гражданин', name: 'Опит', address: 'ул. Б 2' }, emp).error, 'notfound');
+  assert.equal(g.call('addressees.delete', { id: adminOwn.id }, emp).error, 'notfound');
+  const own = g.call('addressees.save', { type: 'Гражданин', name: 'На служителя', address: 'ул. В 3' }, emp);
+  assert.equal(own.ok, true);
+  assert.equal(g.call('org.bootstrap', {}, emp).addressees.length, 1);
+  setPerms(['casesAll']);
+  assert.equal(g.call('addressees.save', { type: 'Гражданин', name: 'Нов', address: 'ул. Г 4' }, emp).error, 'role');
+  assert.equal(g.call('addressees.delete', { id: own.id }, emp).error, 'role');
+});
+
+test('notifications carry the support address and reply to it', () => {
+  const g = load(); operator(g);
+  apply(g);
+  const m = g.mails.find(x => x.to === 'obshtina@example.org');
+  assert.equal(m.replyTo, 'support@platform.zdoi4you.eu');
+  assert.ok(m.body.includes('support@platform.zdoi4you.eu'));
+});

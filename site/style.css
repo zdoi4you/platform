@@ -47,7 +47,7 @@ p { margin: 0; }
 .gate-card h1 { margin-bottom: 4px; }
 .gate-card > .muted { margin-bottom: 18px; }
 .gate-links { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; margin-top: 16px; font-size: 14px; }
-.gate-foot { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+.gate-foot { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
 
 /* оформление */
 header.top { position: sticky; top: 0; z-index: 5; background: var(--header); border-bottom: 1px solid var(--line); }
@@ -61,7 +61,8 @@ nav.tabs a.on { background: var(--soft); color: var(--soft-ink); }
 .user .who { text-align: right; line-height: 1.2; }
 .timer { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .timer.warn { color: var(--bad); font-weight: 600; }
-main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 48px; }
+main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 24px; }
+.app-foot { max-width: 1280px; margin: 0 auto; padding: 0 16px 24px; }
 .head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .doc-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
@@ -90,6 +91,7 @@ input[readonly] { opacity: .75; }
 input:disabled, select:disabled, textarea:disabled { opacity: .6; background: var(--gray-bg); cursor: not-allowed; }
 .check { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; }
 .check input { margin-top: 4px; flex: none; }
+.check.full { grid-column: 1 / -1; }
 fieldset { border: 0; padding: 0; margin: 0 0 20px; }
 legend { font-weight: 600; font-size: 16px; margin-bottom: 10px; padding: 0; }
 .err { background: var(--bad-bg); color: var(--bad); padding: 9px 12px; border-radius: 8px; margin-top: 12px; font-size: 14px; }
@@ -148,3 +150,4 @@ dialog .actions { justify-content: flex-end; margin-top: 16px; }
   .kv dt { margin-top: 6px; }
   .gate-card { padding: 20px 16px; }
 }
+.wide-cell { min-width: 240px; }

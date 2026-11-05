@@ -2,9 +2,10 @@
 
 const SCHEMA = {
   apps: ['Заявки за регистрация', { id: '№', at: 'Подадена', status: 'Статус', name: 'Организация', eik: 'ЕИК/БУЛСТАТ', type: 'Вид', email: 'Официален имейл', payload: 'Данни (JSON)', reason: 'Причина за отказ', decidedBy: 'Решил', decidedAt: 'Дата на решение', orgNo: 'Номер на организация', salt: 'Сол', hash: 'Хеш' }],
-  orgs: ['Организации', { no: 'Номер', name: 'Наименование', eik: 'ЕИК/БУЛСТАТ', type: 'Вид', status: 'Статус', sheetId: 'ID на таблицата', approvedAt: 'Одобрена', approvedBy: 'Одобрил', adminUser: 'Първи администратор' }],
+  orgs: ['Организации', { no: 'Номер', name: 'Наименование', eik: 'ЕИК/БУЛСТАТ', type: 'Вид', status: 'Статус', sheetId: 'ID на таблицата', approvedAt: 'Одобрена', approvedBy: 'Одобрил', adminUser: 'Първи администратор', plan: 'План' }],
   ops: ['Оператори', { username: 'Потребител', name: 'Име', email: 'Имейл', active: 'Активен', salt: 'Сол', hash: 'Хеш', inviteHash: 'Покана (хеш)', inviteExp: 'Покана до', lastLogin: 'Последен вход', createdAt: 'Създаден' }],
   changes: ['Заявки за промяна', { id: '№', at: 'Подадена', no: 'Номер на организация', orgName: 'Организация', by: 'Подал', status: 'Статус', basis: 'Основание', changed: 'Промени (JSON)', reason: 'Причина за отказ', decidedBy: 'Решил', decidedAt: 'Дата на решение' }],
+  plans: ['Планове', { id: 'ID', name: 'Наименование', description: 'Описание', status: 'Състояние', by: 'Въвел', at: 'Въведен' }],
   log: ['Дневник', { at: 'Време', actor: 'Потребител', action: 'Действие', ref: 'Обект', details: 'Подробности' }],
 
   profile: ['Профил', { key: 'Ключ', value: 'Стойност' }],
@@ -24,9 +25,10 @@ const SCHEMA = {
   art15: ['Чл. 15', { item: 'Точка', text: 'Описание', url: 'Интернет адрес', updated: 'Обновено на', by: 'Обновил' }],
   counters: ['Броячи', { key: 'Ключ', value: 'Стойност' }],
   grounds: ['Правни основания', { id: 'ID', scope: 'Вид акт', text: 'Основание', active: 'Активно', by: 'Въвел', at: 'Въведено' }],
-  signers: ['Упълномощени лица', { id: 'ID', name: 'Име', position: 'Длъжност', act: 'Акт за определяне', from: 'В сила от', to: 'В сила до', active: 'Активно', by: 'Въвел', at: 'Въведено' }]
+  signers: ['Упълномощени лица', { id: 'ID', name: 'Име', position: 'Длъжност', act: 'Акт за определяне', from: 'В сила от', to: 'В сила до', active: 'Активно', by: 'Въвел', at: 'Въведено' }],
+  addressees: ['Адресати', { id: 'ID', type: 'Вид', name: 'Име или наименование', seat: 'Седалище', address: 'Адрес', oblast: 'Област', email: 'Имейл', phone: 'Телефон', by: 'Въвел', at: 'Въведен' }]
 };
-const ORG_TABLES = ['profile', 'users', 'cases', 'events', 'docs', 'art15', 'counters', 'signers', 'grounds', 'log'];
+const ORG_TABLES = ['profile', 'users', 'cases', 'events', 'docs', 'art15', 'counters', 'signers', 'grounds', 'addressees', 'log'];
 const HEADERS_CHECKED_ = {};
 
 const master_ = () => {
@@ -163,7 +165,7 @@ function validEik_(raw) {
 
 function mail_(to, subject, body) {
   try {
-    MailApp.sendEmail({ to: to, subject: line_(subject, 200), body: body, name: 'ЗДОИ4You Платформа' });
+    MailApp.sendEmail({ to: to, subject: line_(subject, 200), body: body + '\n\n--\nПоддръжка: ' + CFG.SUPPORT, name: 'ЗДОИ4You Платформа', replyTo: CFG.SUPPORT });
     return true;
   } catch (e) {
     console.error('mail: ' + e);

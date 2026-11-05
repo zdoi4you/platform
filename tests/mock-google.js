@@ -37,6 +37,7 @@ class Sheet {
     return new Range(this, r, c, nr, nc);
   }
   setFrozenRows() {}
+  deleteRow(r) { this.cells.splice(r - 1, 1); }
 }
 class Book {
   constructor(id, name) { this.id = id; this.name = name; this.sheets = [new Sheet('Лист1')]; }
