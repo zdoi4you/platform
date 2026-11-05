@@ -248,10 +248,10 @@ function activate_(d) {
   return { no: no, username: username };
 }
 
-/* забравена парола: отговорът е еднакъв, за да не се разбира кои потребители съществуват; операторите използват operatorReset */
+/* забравена парола: отговорът е еднакъв, за да не се разбира кои потребители съществуват */
 function forgot_(d) {
   const no = str_(d.no, 8), username = str_(d.username, 40).toLowerCase();
-  if (!NO_RE_.test(no) || !USER_RE_.test(username) || no === CFG.OPERATOR_NO) return {};
+  if (!NO_RE_.test(no) || !USER_RE_.test(username)) return {};
   const t = throttle_('forgot|' + no + '|' + username);
   if (t.blocked()) return {};
   t.hit();

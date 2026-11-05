@@ -106,8 +106,7 @@ test('forgotten password: link by email with the same answer for known and unkno
   const known = g.call('forgot', { no: a.no, username: a.username });
   const unknown = g.call('forgot', { no: a.no, username: 'nobody' });
   const badOrg = g.call('forgot', { no: '12345678', username: a.username });
-  const operatorTry = g.call('forgot', { no: '00000000', username: 'admin' });
-  for (const r of [known, unknown, badOrg, operatorTry]) { assert.equal(r.ok, true); assert.equal(Object.keys(r).filter(k => k !== 'ok' && k !== 'now').length, 0); }
+  for (const r of [known, unknown, badOrg]) { assert.equal(r.ok, true); assert.equal(Object.keys(r).filter(k => k !== 'ok' && k !== 'now').length, 0); }
   assert.equal(g.mails.length, 1, 'само към съществуващия потребител');
   const m = mailed(g, 'admin@example.org');
   assert.equal(g.call('login', { no: a.no, username: a.username, hash: HASH('p') }).ok, true, 'старата парола работи до смяната');
@@ -1384,4 +1383,19 @@ test('the connection check logs public settings and a key checksum, never the ke
   const text = logged.join('\n');
   assert.ok(text.includes('MS_CLIENT_ID: client-id') && /MS_PRIVATE_KEY: \d+ знака, контролна сума [0-9a-f]{16}/.test(text));
   assert.ok(!text.includes(MS_KEYS.privateKey.split('\n')[1]), 'ключът не излиза в журнала');
+});
+
+test('an operator who forgot the password gets a link on the operator email', () => {
+  const g = load(), op = operator(g);
+  assert.ok(op);
+  g.mails.length = 0;
+  assert.equal(g.call('forgot', { no: '00000000', username: 'admin' }).ok, true);
+  const m = mailed(g, 'owner@example.org');
+  assert.equal(m[1], '00000000');
+  assert.equal(g.call('login', { no: '00000000', username: 'admin', hash: HASH('o') }).ok, true, 'старата парола работи до смяната');
+  assert.equal(g.call('activate', { no: '00000000', username: 'admin', token: m[3], hash: HASH('n') }).ok, true);
+  assert.equal(g.call('login', { no: '00000000', username: 'admin', hash: HASH('n') }).ok, true);
+  g.mails.length = 0;
+  assert.equal(g.call('forgot', { no: '00000000', username: 'nobody' }).ok, true);
+  assert.equal(g.mails.length, 0, 'непознат оператор');
 });
