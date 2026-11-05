@@ -189,21 +189,47 @@ function validEik_(raw) {
 /* ---------- имейл ---------- */
 
 /*
- * Писмата излизат от пощенската кутия в Microsoft 365, когато в свойствата на скрипта има MS_TENANT, MS_CLIENT_ID,
- * MS_CLIENT_SECRET и MS_SENDER. Без тях, или ако Microsoft откаже, излизат през Google, за да не се губят връзките за достъп.
+ * Писмата излизат от пощенската кутия в Microsoft 365, когато в свойствата на скрипта има MS_TENANT, MS_CLIENT_ID, MS_SENDER,
+ * MS_PRIVATE_KEY, MS_CERT_SHA256 и MS_CERT_SHA1. Без тях, или ако Microsoft откаже, излизат през Google, за да не се губят
+ * връзките за достъп. Приложението се удостоверява със сертификат, защото организацията забранява тайни (client secrets).
  */
 function msConfig_() {
   const p = PropertiesService.getScriptProperties();
-  const c = { tenant: p.getProperty('MS_TENANT'), clientId: p.getProperty('MS_CLIENT_ID'), secret: p.getProperty('MS_CLIENT_SECRET'), sender: p.getProperty('MS_SENDER') };
-  return c.tenant && c.clientId && c.secret && c.sender ? c : null;
+  const c = {
+    tenant: p.getProperty('MS_TENANT'), clientId: p.getProperty('MS_CLIENT_ID'), sender: p.getProperty('MS_SENDER'),
+    key: p.getProperty('MS_PRIVATE_KEY'), sha256: p.getProperty('MS_CERT_SHA256'), sha1: p.getProperty('MS_CERT_SHA1')
+  };
+  return c.tenant && c.clientId && c.sender && c.key && c.sha256 && c.sha1 ? c : null;
+}
+
+/* при поставяне в свойствата на скрипта редовете на ключа може да се слеят, затова се подреждат наново */
+function msPem_(raw) {
+  const body = String(raw).replace(/-----[A-Z ]+-----/g, '').replace(/\s+/g, '');
+  return '-----BEGIN PRIVATE KEY-----\n' + body.replace(/(.{64})/g, '$1\n').replace(/\n$/, '') + '\n-----END PRIVATE KEY-----\n';
+}
+
+const b64url_ = v => Utilities.base64EncodeWebSafe(v).replace(/=+$/, '');
+const hexBytes_ = hex => (String(hex).replace(/[^0-9a-fA-F]/g, '').match(/../g) || []).map(h => { const n = parseInt(h, 16); return n > 127 ? n - 256 : n; });
+
+/* подписано твърдение за вход със сертификат; важи 5 минути */
+function msAssertion_(c, tokenUrl) {
+  const now = Math.floor(Date.now() / 1000);
+  const text = o => b64url_(Utilities.newBlob(JSON.stringify(o)).getBytes());
+  const head = text({ alg: 'RS256', typ: 'JWT', x5t: b64url_(hexBytes_(c.sha1)), 'x5t#S256': b64url_(hexBytes_(c.sha256)) });
+  const claims = text({ aud: tokenUrl, iss: c.clientId, sub: c.clientId, jti: Utilities.getUuid(), nbf: now, iat: now, exp: now + 300 });
+  return head + '.' + claims + '.' + b64url_(Utilities.computeRsaSha256Signature(head + '.' + claims, msPem_(c.key)));
 }
 
 function msToken_(c) {
   const cache = CacheService.getScriptCache(), hit = cache.get('ms:token');
   if (hit) return hit;
-  const r = UrlFetchApp.fetch('https://login.microsoftonline.com/' + encodeURIComponent(c.tenant) + '/oauth2/v2.0/token', {
+  const url = 'https://login.microsoftonline.com/' + encodeURIComponent(c.tenant) + '/oauth2/v2.0/token';
+  const r = UrlFetchApp.fetch(url, {
     method: 'post', muteHttpExceptions: true,
-    payload: { client_id: c.clientId, client_secret: c.secret, scope: 'https://graph.microsoft.com/.default', grant_type: 'client_credentials' }
+    payload: {
+      client_id: c.clientId, scope: 'https://graph.microsoft.com/.default', grant_type: 'client_credentials',
+      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer', client_assertion: msAssertion_(c, url)
+    }
   });
   if (r.getResponseCode() !== 200) throw new Error('токен: ' + r.getResponseCode() + ' ' + msError_(r));
   const t = JSON.parse(r.getContentText());
@@ -215,7 +241,8 @@ function msToken_(c) {
 function msError_(r) {
   try {
     const e = JSON.parse(r.getContentText());
-    return String((e.error && e.error.code) || e.error || '').slice(0, 80);
+    const aad = /AADSTS\d+/.exec(e.error_description || '');
+    return (String((e.error && e.error.code) || e.error || '').slice(0, 80) + (aad ? ' ' + aad[0] : '')).trim();
   } catch (_) { return ''; }
 }
 

@@ -69,9 +69,11 @@ function load() {
       computeDigest: (a, s) => signed(crypto.createHash(a).update(Array.isArray(s) ? Buffer.from(s.map(b => b & 255)) : Buffer.from(String(s), 'utf8')).digest()),
       computeHmacSha256Signature: (v, k) => signed(crypto.createHmac('sha256', k).update(v, 'utf8').digest()),
       base64Encode: a => Buffer.from(a.map(b => b & 255)).toString('base64'),
+      base64EncodeWebSafe: a => Buffer.from(a.map(b => b & 255)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_'),
+      computeRsaSha256Signature: (v, key) => signed(crypto.createSign('RSA-SHA256').update(v, 'utf8').sign(key)),
       getUuid: () => crypto.randomUUID(),
       base64Decode: s => signed(Buffer.from(s, 'base64')),
-      newBlob: (bytes, mime, name) => ({ bytes, mime, name, getBytes: () => bytes }),
+      newBlob: (data, mime, name) => { const bytes = typeof data === 'string' ? signed(Buffer.from(data, 'utf8')) : data; return { bytes, mime, name, getBytes: () => bytes }; },
       formatDate: (d, tz, f) => {
         const iso = new Date(d.getTime()).toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T');
         return f === 'yyyy-MM-dd' ? iso.slice(0, 10) : iso;

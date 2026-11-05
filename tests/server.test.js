@@ -1279,8 +1279,10 @@ test('department reply keeps the filled answers and is linked to the department'
   assert.ok(g.call('case.get', { regNo: reg }, a.token).events.some(e => e.text.includes('от Правен отдел')));
 });
 
+const MS_KEYS = require('crypto').generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
 function microsoft(g, send) {
-  g.props.set('MS_TENANT', 'tenant-id'); g.props.set('MS_CLIENT_ID', 'client-id'); g.props.set('MS_CLIENT_SECRET', 'тайна-стойност'); g.props.set('MS_SENDER', 'no-reply@platform.zdoi4you.eu');
+  g.props.set('MS_TENANT', 'tenant-id'); g.props.set('MS_CLIENT_ID', 'client-id'); g.props.set('MS_SENDER', 'no-reply@platform.zdoi4you.eu');
+  g.props.set('MS_PRIVATE_KEY', MS_KEYS.privateKey); g.props.set('MS_CERT_SHA256', 'AA:BB:' + 'CC:'.repeat(29) + 'DD'); g.props.set('MS_CERT_SHA1', 'ff'.repeat(20));
   g.setFetch(url => (url.includes('login.microsoftonline.com') ? { code: 200, body: JSON.stringify({ access_token: 'token-1', expires_in: 3600 }) } : send(url)));
 }
 
@@ -1303,6 +1305,20 @@ test('mail goes through Microsoft Graph from the configured mailbox, with reply-
   assert.equal(token.length, 1, 'токенът се използва повторно');
   assert.ok(token[0].url.includes('/tenant-id/oauth2/v2.0/token'));
   assert.equal(token[0].opts.payload.grant_type, 'client_credentials');
+  assert.equal(token[0].opts.payload.client_assertion_type, 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer');
+  assert.equal(token[0].opts.payload.client_secret, undefined);
+  const [h, c, sig] = token[0].opts.payload.client_assertion.split('.');
+  const dec = s => JSON.parse(Buffer.from(s, 'base64url').toString('utf8'));
+  assert.equal(dec(h).alg, 'RS256');
+  assert.equal(dec(h)['x5t#S256'], Buffer.from('aabb' + 'cc'.repeat(29) + 'dd', 'hex').toString('base64url'), 'двоеточията в отпечатъка не пречат');
+  assert.equal(dec(h).x5t, Buffer.from('ff'.repeat(20), 'hex').toString('base64url'));
+  assert.ok(!/[+/=]/.test(h + c + sig), 'base64url без допълване');
+  const claims = dec(c);
+  assert.equal(claims.aud, 'https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token');
+  assert.equal(claims.iss, 'client-id'); assert.equal(claims.sub, 'client-id');
+  assert.ok(claims.jti && claims.exp - claims.nbf === 300);
+  assert.ok(require('crypto').createVerify('RSA-SHA256').update(h + '.' + c).verify(MS_KEYS.publicKey, Buffer.from(sig, 'base64url')), 'истински подпис');
+  assert.ok(!JSON.stringify(g.fetches.map(f => f.opts)).includes(MS_KEYS.privateKey.split('\n')[1]), 'частният ключ не се изпраща');
   assert.ok(sends.length >= 1);
   assert.ok(sends[0].url.endsWith('/users/no-reply%40platform.zdoi4you.eu/sendMail'));
   assert.equal(sends[0].opts.headers.Authorization, 'Bearer token-1');
@@ -1311,7 +1327,6 @@ test('mail goes through Microsoft Graph from the configured mailbox, with reply-
   assert.equal(body.message.toRecipients[0].emailAddress.address, 'obshtina@example.org');
   assert.equal(body.message.replyTo[0].emailAddress.address, 'support@platform.zdoi4you.eu');
   assert.ok(body.message.body.content.includes('БУЛАДМИН'));
-  assert.ok(!sends[0].opts.payload.includes('тайна-стойност'), 'тайната не излиза в писмото');
 });
 
 test('if Microsoft refuses, the message still goes out through Google and the token is renewed', () => {
@@ -1325,7 +1340,14 @@ test('if Microsoft refuses, the message still goes out through Google and the to
   g.ctx.mail_('a@example.org', 'Тема', 'Текст');
   g.ctx.mail_('a@example.org', 'Тема', 'Текст');
   assert.equal(g.fetches.filter(f => f.url.includes('login.microsoftonline.com')).length, 1, 'след 401 токенът се иска наново');
-  g.setFetch(url => (url.includes('login.microsoftonline.com') ? { code: 401, body: JSON.stringify({ error: 'invalid_client' }) } : { code: 202, body: '' }));
+  // ключ, чиито редове са се слели при поставяне в свойствата
+  g.props.set('MS_PRIVATE_KEY', MS_KEYS.privateKey.replace(/\n/g, ' '));
+  g.ctx.CacheService.getScriptCache().remove('ms:token');
+  g.setFetch(url => (url.includes('login.microsoftonline.com') ? { code: 200, body: JSON.stringify({ access_token: 't', expires_in: 3600 }) } : { code: 202, body: '' }));
+  g.mails.length = 0;
+  assert.equal(g.ctx.mail_('c@example.org', 'Тема', 'Текст'), true);
+  assert.equal(g.mails.length, 0, 'ключът се подрежда наново и подписът успява');
+  g.setFetch(url => (url.includes('login.microsoftonline.com') ? { code: 401, body: JSON.stringify({ error: 'invalid_client', error_description: 'AADSTS700027: подробности' }) } : { code: 202, body: '' }));
   g.ctx.CacheService.getScriptCache().remove('ms:token');
   g.mails.length = 0;
   assert.equal(g.ctx.mail_('b@example.org', 'Тема', 'Текст'), true, 'изтекла тайна');
@@ -1342,4 +1364,11 @@ test('the connection check reports a missing configuration and never falls back 
   microsoft(g, () => ({ code: 202, body: '' }));
   g.ctx.msTest();
   assert.equal(g.mails.length, 0);
+});
+
+test('a rejected certificate is reported with the Microsoft error code', () => {
+  const g = load(); operator(g);
+  microsoft(g, () => ({ code: 202, body: '' }));
+  g.setFetch(() => ({ code: 401, body: JSON.stringify({ error: 'invalid_client', error_description: 'AADSTS700027: Client assertion failed signature validation. Trace ID: x' }) }));
+  assert.throws(() => g.ctx.msTest(), /токен: 401 invalid_client AADSTS700027$/);
 });

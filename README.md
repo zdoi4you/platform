@@ -75,7 +75,13 @@ GitHub Pages            │
 
 Без настройка писмата излизат през Google. За да излизат от `no-reply@platform.zdoi4you.eu`, скриптът използва Microsoft Graph с регистрирано приложение в Microsoft Entra. Правото за изпращане е ограничено с RBAC for Applications само до тази кутия и не се дава в Entra.
 
-В **Project Settings → Script Properties** се въвеждат `MS_TENANT`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` и `MS_SENDER`. Функцията `msTest` от редактора проверява връзката и при първото изпълнение иска разрешението за външни заявки. Ако Microsoft откаже или тайната изтече, писмата продължават през Google и причината се вижда в журнала.
+Приложението се удостоверява със сертификат, защото организацията забранява client secrets. Сертификатът се създава с:
+
+```
+openssl req -x509 -newkey rsa:2048 -nodes -keyout zdoi-mail.key -out zdoi-mail.crt -sha256 -days 730 -subj "/CN=ZDOI4You Platform Mail"
+```
+
+В Git Bash под Windows пред командата се добавя `MSYS_NO_PATHCONV=1`, иначе `-subj` се чете като път. Файлът `.crt` се качва в Entra (**Certificates & secrets → Certificates**). В **Project Settings → Script Properties** се въвеждат `MS_TENANT`, `MS_CLIENT_ID`, `MS_SENDER`, `MS_PRIVATE_KEY` (съдържанието на `.key`), `MS_CERT_SHA256` и `MS_CERT_SHA1` (от `openssl x509 -noout -fingerprint -sha256` и `-sha1`). Ключът не се качва в хранилището. Функцията `msTest` от редактора проверява връзката и при първото изпълнение иска разрешението за външни заявки. Ако Microsoft откаже или сертификатът изтече, писмата продължават през Google и причината се вижда в журнала.
 
 **Внимание:** манифестът изисква `script.external_request`. Новото внедряване се прави едва след като собственикът е одобрил разрешението чрез `msTest`, иначе уеб приложението спира.
 

@@ -198,7 +198,7 @@ function setup() {
 /* проверка на връзката с Microsoft 365: изпълнява се от редактора и не преминава към Google при грешка */
 function msTest() {
   const c = msConfig_();
-  if (!c) throw new Error('Липсват свойства на скрипта: MS_TENANT, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_SENDER.');
+  if (!c) throw new Error('Липсват свойства на скрипта: MS_TENANT, MS_CLIENT_ID, MS_SENDER, MS_PRIVATE_KEY, MS_CERT_SHA256, MS_CERT_SHA1.');
   const to = String(Session.getEffectiveUser().getEmail());
   msSend_(c, to, 'ЗДОИ4You Платформа – проверка на пощата', 'Връзката с Microsoft 365 работи. Това писмо е изпратено от ' + c.sender + '.');
   console.log('Изпратено от ' + c.sender + ' до ' + to);
