@@ -72,6 +72,9 @@ function actions_() {
     'case.create': { auth: 'user', perm: 'casesEdit', write: true, fn: caseCreateWithAddressee_ },
     'case.update': { auth: 'user', perm: 'casesEdit', write: true, fn: caseUpdate_ },
     'case.comment': { auth: 'user', perm: 'casesEdit', write: true, fn: caseComment_ },
+    'case.assign': { auth: 'user', perm: 'casesEdit', write: true, fn: caseAssign_ },
+    'notify.save': { auth: 'user', write: true, fn: notifySave_ },
+    'notify.test': { auth: 'user', fn: notifyTest_ },
     'case.dossier': { auth: 'user', write: true, fn: caseDossier_ },
 
     'doc.create': { auth: 'user', write: true, fn: docCreate_ },
@@ -139,7 +142,9 @@ function dispatch_(req) {
     const ctx = a.auth === 'public' ? null : auth_(req.token, a.auth);
     if (a.perm && !ctx.perms[a.perm]) fail_('role', 'Нямате право за това действие.');
     const run = () => a.fn(data, ctx);
-    return Object.assign({ ok: true, now: Date.now() }, a.write ? locked_(run) : run());
+    const result = a.write ? locked_(run) : run();
+    runAfter_(ctx);
+    return Object.assign({ ok: true, now: Date.now() }, result);
   } catch (err) {
     if (err && err.code) return { ok: false, error: err.code, message: err.message };
     console.error(err && err.stack || err);

@@ -659,7 +659,13 @@ function caseTable(rows) {
       h('td', null, statusPill(c.status), c.outcome ? h('div', { class: 'small muted' }, c.outcome) : null),
       h('td', null, c.due ? h('div', { class: 'mono small' }, fmt(c.due)) : null, duePill(c),
         c.thirdInvolved ? h('div', { class: 'small muted' }, c.thirdAsked ? (c.thirdGot ? 'Трето лице: отговорило' : `Трето лице: отговор до ${fmt(c.thirdReplyBy)}`) : `Трето лице: искане до ${fmt(c.thirdBy)}`) : null),
-      h('td', null, c.owner || '—'))))));
+      h('td', null, ownerLabel(c.owner)))))));
+}
+/* името на отговорника; без заредени потребители остава потребителското име */
+function ownerLabel(username) {
+  if (!username) return '—';
+  const u = ((Store.boot && Store.boot.users) || []).find(x => x.username === username);
+  return u ? u.name || username : username;
 }
 
 async function viewDash() {
@@ -681,19 +687,22 @@ async function viewDash() {
 }
 
 async function viewCases() {
-  const { cases } = await api('case.list');
+  const [b, { cases }] = await Promise.all([boot(), api('case.list')]);
   const q = h('input', { type: 'search', placeholder: 'Търсене по номер, заявител или текст', 'aria-label': 'Търсене' });
+  const own = h('select', { 'aria-label': 'Отговорник' }, h('option', { value: '' }, 'Всички отговорници'), h('option', { value: b.me.username }, 'Моите преписки'), h('option', { value: '-' }, 'Без отговорник'),
+    b.users.filter(u => u.username !== b.me.username).map(u => h('option', { value: u.username }, u.name || u.username)));
+  const ownerMatch = c => !own.value || (own.value === '-' ? !c.owner : c.owner === own.value);
   const st = h('select', { 'aria-label': 'Статус' }, h('option', { value: '' }, 'Всички статуси'), CASE_STATUS.map(s => h('option', { value: s }, s)));
   const yr = h('select', { 'aria-label': 'Година' }, h('option', { value: '' }, 'Всички години'), [...new Set(cases.map(c => c.regDate.slice(0, 4)))].sort().reverse().map(y => h('option', { value: y }, y)));
   const box = h('div');
   const draw = () => {
     const t = q.value.trim().toLowerCase();
-    box.replaceChildren(caseTable(cases.filter(c => (!st.value || c.status === st.value) && (!yr.value || c.regDate.startsWith(yr.value)) && (!t || [c.regNo, c.applicantName, c.subject].join(' ').toLowerCase().includes(t)))));
+    box.replaceChildren(caseTable(cases.filter(c => ownerMatch(c) && (!st.value || c.status === st.value) && (!yr.value || c.regDate.startsWith(yr.value)) && (!t || [c.regNo, c.applicantName, c.subject].join(' ').toLowerCase().includes(t)))));
   };
-  [q, st, yr].forEach(el => el.addEventListener('input', draw));
+  [q, st, yr, own].forEach(el => el.addEventListener('input', draw));
   draw();
   setView(h('div', { class: 'head' }, h('h1', null, 'Преписки по ЗДОИ'), can('casesEdit') ? h('a', { class: 'btn primary', href: '#/new' }, '+ Нова преписка') : null),
-    h('div', { class: 'card' }, h('div', { class: 'filters' }, q, st, yr), box));
+    h('div', { class: 'card' }, h('div', { class: 'filters' }, q, st, yr, own), box));
 }
 
 function caseFields(users) {
@@ -703,7 +712,7 @@ function caseFields(users) {
       { k: 'kind', label: 'Вид заявление', type: 'select', options: CASE_KIND, req: true },
       { k: 'regDate', label: 'Дата на регистриране', type: 'date', req: true, hint: 'От нея тече срокът по чл. 28, ал. 1.' },
       { k: 'channel', label: 'Начин на подаване', type: 'select', options: CASE_CHANNEL, req: true },
-      { k: 'owner', label: 'Отговорник', type: 'select', options: owners }
+      { k: 'owner', label: 'Отговорник', type: 'select', options: owners, hint: 'Получава известие по имейл, ако го е избрал в профила си.' }
     ],
     applicant: [
       { k: 'applicantType', label: 'Вид заявител', type: 'select', options: APPLICANT_TYPE, req: true },
@@ -756,7 +765,7 @@ async function viewCase(regNo) {
     h('fieldset', null, h('legend', null, 'Статус и резултат'), h('div', { class: 'form-grid' },
       fieldEl({ k: 'status', label: 'Статус', type: 'select', options: CASE_STATUS, req: true }, c.status),
       fieldEl({ k: 'outcome', label: 'Резултат', type: 'select', options: CASE_OUTCOME }, c.outcome),
-      F.main.map(f => fieldEl(f, c[f.k])))),
+      F.main.filter(f => f.k !== 'owner').map(f => fieldEl(f, c[f.k])))),
     h('fieldset', null, h('legend', null, 'Заявител'), h('div', { class: 'form-grid' }, F.applicant.map(f => fieldEl(f, c[f.k], c)))),
     h('fieldset', null, h('legend', null, 'Заявление'), h('div', { class: 'form-grid' }, F.request.map(f => fieldEl(f, f.k === 'noPublish' ? (c.noPublish || 'Не') : c[f.k])))),
     h('fieldset', null, h('legend', null, 'Срокове и движение'), h('div', { class: 'form-grid' },
@@ -815,8 +824,26 @@ async function viewCase(regNo) {
     toast(r2.existed ? 'Вече е в адресатите.' : 'Записано в адресатите.');
   }));
   setView(h('div', { class: 'head' }, h('div', null, h('p', { class: 'small' }, h('a', { href: '#/cases' }, '← Всички преписки')), h('h1', null, `Преписка ${c.regNo}`), h('p', { class: 'muted' }, c.applicantName)), h('div', { class: 'actions' }, h('button', { class: 'btn sm', type: 'button', onclick: () => dossierDialog(c) }, 'Досие (PDF)'), can('casesEdit') ? saveApplicant : null, statusPill(c.status))),
-    h('div', { class: 'split' }, form, h('div', { class: 'stack' }, dueCard, types.length ? docCard : null, docsCard,
+    h('div', { class: 'split' }, form, h('div', { class: 'stack' }, ownerCard(c, b.users), dueCard, types.length ? docCard : null, docsCard,
       caseCourtsCard(c, r.courts), filesCard({ scope: 'case', ref: c.regNo, files: r.files, space: r.space, reload: () => viewCase(c.regNo).catch(showError) }), hist)));
+}
+
+function ownerCard(c, users) {
+  if (!can('casesEdit')) return h('div', { class: 'card' }, h('h2', null, 'Отговорник'), h('p', null, ownerLabel(c.owner)));
+  // вече определен, но спрян потребител остава в списъка, за да се вижда кой е
+  const known = users.some(u => u.username === c.owner);
+  const sel = h('select', { 'aria-label': 'Отговорник' }, h('option', { value: '' }, 'Без отговорник'),
+    !c.owner || known ? null : h('option', { value: c.owner }, c.owner + ' (спрян)'),
+    users.map(u => h('option', { value: u.username }, u.name || u.username)));
+  sel.value = c.owner || '';
+  const btn = h('button', { class: 'btn sm block', type: 'button' }, 'Определи');
+  btn.addEventListener('click', () => withBusy(btn, async () => {
+    const r = await api('case.assign', { regNo: c.regNo, owner: sel.value });
+    toast(r.owner ? 'Отговорникът е определен.' : 'Отговорникът е премахнат.');
+    if (r.visible) viewCase(c.regNo).catch(showError); else location.hash = '#/cases';
+  }));
+  return h('div', { class: 'card stack' }, h('h2', null, 'Отговорник'), sel, btn,
+    h('p', { class: 'small muted' }, 'Отговорникът получава известие по имейл, ако го е избрал в профила си.'));
 }
 
 function docList(rows, after, onReply) {
@@ -1588,8 +1615,42 @@ function logView(rows) {
     h('tbody', null, rows.map(l => h('tr', null, h('td', { class: 'mono small' }, fmtTime(l.at)), h('td', null, l.actor), h('td', null, l.action), h('td', null, l.ref), h('td', { class: 'small' }, l.details))))) : h('p', { class: 'muted' }, 'Няма записи.'))];
 }
 
-function viewMe() {
+const NOTIFY_OPTIONS = [
+  ['assigned', 'Определен съм за отговорник'],
+  ['deadlines', 'Наближава или изтича срок по моя преписка'],
+  ['status', 'Промяна на статуса на моя преписка'],
+  ['docs', 'Нов документ по моя преписка'],
+  ['comments', 'Нов коментар по моя преписка']
+];
+
+function notifyCard(b) {
+  const boxes = NOTIFY_OPTIONS.concat(can('casesAll') ? [['allCases', 'Същите известия за всички преписки, не само за моите']] : []).map(([k, label]) => {
+    const input = h('input', { type: 'checkbox', value: k });
+    input.checked = b.me.notify.includes(k);
+    return h('label', { class: 'check' }, input, h('span', null, label));
+  });
+  const save = h('button', { class: 'btn primary block', type: 'button' }, 'Запази известията');
+  save.addEventListener('click', () => withBusy(save, async () => {
+    const events = boxes.map(l => l.querySelector('input')).filter(i => i.checked).map(i => i.value);
+    b.me.notify = (await api('notify.save', { events })).notify;
+    toast('Известията са запазени.');
+  }));
+  const test = h('button', { class: 'btn block', type: 'button' }, 'Изпрати пробно писмо');
+  test.addEventListener('click', () => withBusy(test, async () => {
+    const r = await api('notify.test');
+    toast(r.emailed ? 'Изпратено на ' + r.to + '. Проверете и папка „Спам“.' : 'Писмото не се изпрати. Пишете на поддръжката.');
+  }));
+  return h('div', { class: 'card stack' }, h('h2', null, 'Известия по имейл'),
+    h('p', { class: 'small muted' }, 'Изпращат се на ', h('b', null, b.me.email), '. Адреса променя администраторът. „Моя преписка“ е тази, на която сте отговорник. Писмата съдържат номера на преписката и какво се е случило, без данни за заявителя.'),
+    boxes,
+    b.remindersOn ? null : h('p', { class: 'small note' }, 'Напомнянията за срокове още не са включени от поддръжката на платформата. Останалите известия работят.'),
+    save, test);
+}
+
+async function viewMe() {
   const me = session.me;
+  let b = null;
+  if (!me.operator) { Store.boot = null; b = await boot(); }
   const form = h('form', { class: 'card' }, h('h2', null, 'Смяна на парола'), h('br'), h('div', { class: 'stack' },
     h('input', { class: 'hidden-field', type: 'text', value: me.username, autocomplete: 'username', tabindex: '-1', 'aria-hidden': 'true' }),
     fieldEl({ k: 'current', label: 'Текуща парола', type: 'password', req: true, autocomplete: 'current-password' }),
@@ -1603,7 +1664,7 @@ function viewMe() {
     toast('Паролата е сменена.');
   });
   setView(h('div', { class: 'head' }, h('h1', null, 'Моят профил')),
-    h('div', { class: 'split' }, form, h('div', { class: 'card' }, h('dl', { class: 'kv' },
+    h('div', { class: 'split' }, h('div', { class: 'stack' }, form, b ? notifyCard(b) : null), h('div', { class: 'card' }, h('dl', { class: 'kv' },
       h('dt', null, 'Име'), h('dd', null, me.name), h('dt', null, 'Потребител'), h('dd', { class: 'mono' }, me.username),
       h('dt', null, 'Роля'), h('dd', null, me.role), h('dt', null, 'Организация'), h('dd', null, me.org), h('dt', null, 'Номер'), h('dd', { class: 'mono' }, me.no)))));
 }

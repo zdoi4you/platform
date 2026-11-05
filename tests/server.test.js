@@ -1399,3 +1399,200 @@ test('an operator who forgot the password gets a link on the operator email', ()
   assert.equal(g.call('forgot', { no: '00000000', username: 'nobody' }).ok, true);
   assert.equal(g.mails.length, 0, 'непознат оператор');
 });
+
+/* ---------- известия и отговорник ---------- */
+const NOTIFY_SUBJECT = 'ЗДОИ4You Платформа – преписка ';
+const notices = (g, to) => g.mails.filter(m => m.to === to && m.subject.startsWith(NOTIFY_SUBJECT));
+const sofiaToday = g => g.ctx.Utilities.formatDate(new g.ctx.Date(), 'Europe/Sofia', 'yyyy-MM-dd');
+const sofiaHour = g => Number(g.ctx.Utilities.formatDate(new g.ctx.Date(), 'Europe/Sofia', 'H'));
+const noon = g => { while (sofiaHour(g) !== 12) g.advance(36e5); };
+const shiftDay = (d, n) => new Date(Date.parse(d + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+const setupTeam = () => {
+  const g = load(), op = operator(g), a = approve(g, op);
+  const link = addStaff(g, a.token);
+  assert.equal(g.call('activate', { no: a.no, username: 'emp1', token: link[3], hash: HASH('e') }).ok, true);
+  const emp = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
+  g.mails.length = 0;
+  return { g, op, a, emp };
+};
+
+test('assigning a responsible person mails them by default, but not the person who assigned themselves', () => {
+  const { g, a, emp } = setupTeam();
+  const regNo = g.call('case.create', caseData({ owner: 'mpetrova' }), a.token).regNo;
+  assert.equal(g.mails.length, 0, 'администраторът сам се определя при въвеждане');
+  const r = g.call('case.assign', { regNo, owner: 'emp1' }, a.token);
+  assert.equal(r.owner, 'emp1');
+  assert.equal(r.visible, true);
+  const m = notices(g, 'emp@example.org');
+  assert.equal(m.length, 1);
+  assert.ok(m[0].body.includes('Определени сте за отговорник') && m[0].body.includes(encodeURIComponent(regNo)));
+  assert.equal(g.call('case.get', { regNo }, emp).case.owner, 'emp1');
+  assert.ok(g.call('case.get', { regNo }, a.token).events.some(e => e.kind === 'Отговорник'));
+  g.mails.length = 0;
+  assert.equal(g.call('case.assign', { regNo, owner: 'emp1' }, a.token).owner, 'emp1');
+  assert.equal(g.mails.length, 0, 'без промяна няма писмо');
+});
+
+test('a responsible person must be an active user of the same organization', () => {
+  const { g, a } = setupTeam();
+  const regNo = g.call('case.create', caseData(), a.token).regNo;
+  assert.equal(g.call('case.assign', { regNo, owner: 'nobody' }, a.token).error, 'owner');
+  assert.equal(g.call('case.create', caseData({ owner: 'nobody' }), a.token).error, 'owner');
+  assert.equal(g.call('case.update', updateData(g.call('case.get', { regNo }, a.token).case, { owner: 'nobody' }), a.token).error, 'owner');
+});
+
+test('saving a case without the owner field keeps the responsible person; a suspended owner may stay', () => {
+  const { g, a } = setupTeam();
+  const regNo = g.call('case.create', caseData({ owner: 'emp1' }), a.token).regNo;
+  const c = g.call('case.get', { regNo }, a.token).case;
+  const { owner, ...noOwner } = c;
+  assert.equal(owner, 'emp1');
+  assert.equal(g.call('case.update', Object.assign(noOwner, { servedHow: 'Лично' }), a.token).ok, true);
+  assert.equal(g.call('case.get', { regNo }, a.token).case.owner, 'emp1');
+  assert.equal(g.call('users.save', { username: 'emp1', name: 'Служител', position: 'Експерт', email: 'emp@example.org', role: 'Служител', active: false }, a.token).ok, true);
+  assert.equal(g.call('case.update', updateData(g.call('case.get', { regNo }, a.token).case, { servedHow: 'По имейл' }), a.token).ok, true);
+  assert.equal(g.call('case.get', { regNo }, a.token).case.owner, 'emp1');
+});
+
+test('each user chooses the notices: status and comments are off until chosen, and off means off', () => {
+  const { g, a, emp } = setupTeam();
+  const regNo = g.call('case.create', caseData({ owner: 'emp1' }), a.token).regNo;
+  g.mails.length = 0;
+  const status = s => g.call('case.update', updateData(g.call('case.get', { regNo }, a.token).case, { status: s }), a.token);
+  assert.equal(status('В обработка').ok, true);
+  assert.equal(g.call('case.comment', { regNo, text: 'Тайна бележка' }, a.token).ok, true);
+  assert.equal(notices(g, 'emp@example.org').length, 0, 'по подразбиране само отговорник и срокове');
+
+  assert.deepEqual(g.call('notify.save', { events: ['status', 'comments'] }, emp).notify, ['status', 'comments']);
+  assert.equal(status('Чака трето лице').ok, true);
+  assert.equal(g.call('case.comment', { regNo, text: 'Тайна бележка' }, a.token).ok, true);
+  const got = notices(g, 'emp@example.org');
+  assert.equal(got.length, 2);
+  assert.ok(got[0].body.includes('Нов статус: Чака трето лице'));
+  assert.ok(!got[1].body.includes('Тайна бележка'), 'текстът на коментара не излиза по имейл');
+
+  g.mails.length = 0;
+  assert.deepEqual(g.call('notify.save', { events: [] }, emp).notify, []);
+  assert.deepEqual(g.call('org.bootstrap', {}, emp).me.notify, [], 'празният избор остава празен');
+  assert.equal(g.call('case.assign', { regNo, owner: '' }, a.token).ok, true);
+  assert.equal(g.call('case.assign', { regNo, owner: 'emp1' }, a.token).ok, true);
+  assert.equal(notices(g, 'emp@example.org').length, 0);
+  assert.equal(g.call('notify.save', { events: ['hack'] }, emp).error, 'value');
+});
+
+test('a document notice names the document and the new status in one letter', () => {
+  const { g, a, emp } = setupTeam();
+  g.call('notify.save', { events: ['docs', 'status'] }, emp);
+  const regNo = g.call('case.create', caseData({ owner: 'emp1' }), a.token).regNo;
+  g.mails.length = 0;
+  const r = g.call('doc.create', { type: 'clarify', regNo, title: 'Искане за уточняване', date: '2026-11-03', fields: { what: 'Кои договори' } }, a.token);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const m = notices(g, 'emp@example.org');
+  assert.equal(m.length, 1);
+  assert.ok(m[0].body.includes(r.no) && m[0].body.includes('Нов статус: Чака уточняване'));
+});
+
+test('case notices never contain applicant data', () => {
+  const { g, a, emp } = setupTeam();
+  g.call('notify.save', { events: ['assigned', 'status', 'docs', 'comments'] }, emp);
+  const regNo = g.call('case.create', caseData({ owner: 'emp1', applicantName: 'Секретно Име', subject: 'Секретно искане' }), a.token).regNo;
+  g.call('case.update', updateData(g.call('case.get', { regNo }, a.token).case, { status: 'В обработка' }), a.token);
+  const m = notices(g, 'emp@example.org');
+  assert.ok(m.length >= 2);
+  m.forEach(x => assert.ok(!/Секретно/.test(x.subject + x.body)));
+});
+
+test('watching all cases needs the right to see them', () => {
+  const { g, a, emp } = setupTeam();
+  const staff = perms => g.call('users.save', { username: 'emp1', name: 'Служител', position: 'Експерт', email: 'emp@example.org', role: 'Служител', perms }, a.token);
+  assert.equal(staff(['casesEdit']).ok, true);
+  g.advance(301000); // кешът на правата
+  assert.deepEqual(g.call('notify.save', { events: ['status', 'allCases'] }, emp).notify, ['status'], 'без право за всички преписки изборът отпада');
+  // ръчно променена клетка също не дава достъп до чужда преписка
+  const book = [...g.books.values()].find(b => b.getSheetByName('Потребители') && JSON.stringify(b.getSheetByName('Потребители').cells).includes('emp1'));
+  const sheet = book.getSheetByName('Потребители'), col = sheet.cells[0].indexOf('Известия (JSON)');
+  sheet.cells.find(r => r[0] === 'emp1')[col] = '["status","allCases"]';
+  g.mails.length = 0;
+  const regNo = g.call('case.create', caseData({ owner: 'mpetrova' }), a.token).regNo;
+  g.call('case.update', updateData(g.call('case.get', { regNo }, a.token).case, { status: 'В обработка' }), a.token);
+  assert.equal(notices(g, 'emp@example.org').length, 0);
+
+  assert.equal(staff(['casesAll', 'casesEdit']).ok, true);
+  g.mails.length = 0;
+  const regNo2 = g.call('case.create', caseData({ owner: 'mpetrova' }), a.token).regNo;
+  assert.equal(notices(g, 'emp@example.org').length, 1, 'нова преписка');
+  g.call('case.update', updateData(g.call('case.get', { regNo: regNo2 }, a.token).case, { status: 'В обработка' }), a.token);
+  assert.equal(notices(g, 'emp@example.org').length, 2);
+});
+
+test('a failed notice does not fail the action', () => {
+  const { g, a } = setupTeam();
+  g.ctx.MailApp.sendEmail = () => { throw new Error('quota'); };
+  const r = g.call('case.create', caseData({ owner: 'emp1' }), a.token);
+  assert.equal(r.ok, true);
+  assert.equal(g.call('case.get', { regNo: r.regNo }, a.token).case.owner, 'emp1');
+});
+
+test('the test message goes only to the own address and is limited', () => {
+  const { g, emp } = setupTeam();
+  const r = g.call('notify.test', {}, emp);
+  assert.equal(r.emailed, true);
+  assert.equal(r.to, 'emp@example.org');
+  assert.equal(g.mails.at(-1).to, 'emp@example.org');
+  g.call('notify.test', {}, emp); g.call('notify.test', {}, emp);
+  assert.equal(g.call('notify.test', {}, emp).error, 'locked');
+});
+
+test('deadline reminders: once a day, only on the chosen days, to those who chose them', () => {
+  const { g, a, emp } = setupTeam();
+  assert.equal(g.call('org.bootstrap', {}, emp).remindersOn, false, 'без тригер настройките го показват');
+  noon(g);
+  const admin = g.call('login', { no: a.no, username: 'mpetrova', hash: HASH('p') }).token;
+  const regNo = g.call('case.create', caseData({ owner: 'emp1', regDate: sofiaToday(g) }), admin).regNo;
+  const due = g.call('case.get', { regNo }, admin).case.due;
+  const mine = () => g.mails.filter(m => m.to === 'emp@example.org' && /срокове/.test(m.subject));
+  const goTo = target => { while (sofiaToday(g) < target) g.advance(864e5); };
+
+  goTo(shiftDay(due, -5));
+  g.ctx.remindDeadlines();
+  assert.equal(mine().length, 0, '5 дни преди срока не се напомня');
+  const session = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
+  assert.equal(g.call('org.bootstrap', {}, session).remindersOn, true);
+
+  goTo(shiftDay(due, -3));
+  g.ctx.remindDeadlines();
+  g.ctx.remindDeadlines();
+  assert.equal(mine().length, 1, 'веднъж на ден');
+  const body = mine()[0].body;
+  assert.ok(body.includes(regNo) && body.includes('остават 3 дни'));
+  assert.ok(!body.includes(caseData().applicantName), 'без данни за заявителя');
+
+  goTo(due);
+  g.ctx.remindDeadlines();
+  assert.equal(mine().length, 2);
+  assert.ok(mine()[1].body.includes('изтича днес'));
+
+  const later = g.call('login', { no: a.no, username: 'emp1', hash: HASH('e') }).token;
+  g.call('notify.save', { events: ['assigned'] }, later);
+  goTo(shiftDay(due, 1));
+  g.ctx.remindDeadlines();
+  assert.equal(mine().length, 2, 'изключените напомняния не идват');
+});
+
+test('reminders wait for the morning and skip closed cases', () => {
+  const { g, a } = setupTeam();
+  noon(g);
+  const admin = g.call('login', { no: a.no, username: 'mpetrova', hash: HASH('p') }).token;
+  const regNo = g.call('case.create', caseData({ owner: 'emp1', regDate: sofiaToday(g) }), admin).regNo;
+  const c = g.call('case.get', { regNo }, admin).case;
+  const mine = () => g.mails.filter(m => /срокове/.test(m.subject));
+  while (sofiaToday(g) < shiftDay(c.due, -1)) g.advance(864e5);
+  g.advance(-6 * 36e5); // 6 ч. сутринта
+  g.ctx.remindDeadlines();
+  assert.equal(mine().length, 0, 'преди 8 ч. няма писма');
+  g.advance(6 * 36e5);
+  const op = g.call('login', { no: a.no, username: 'mpetrova', hash: HASH('p') }).token;
+  assert.equal(g.call('case.update', updateData(g.call('case.get', { regNo }, op).case, { status: 'Приключена' }), op).ok, true);
+  g.ctx.remindDeadlines();
+  assert.equal(mine().length, 0, 'приключената преписка няма срок');
+});

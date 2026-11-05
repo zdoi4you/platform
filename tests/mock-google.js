@@ -76,6 +76,7 @@ function load() {
       newBlob: (data, mime, name) => { const bytes = typeof data === 'string' ? signed(Buffer.from(data, 'utf8')) : data; return { bytes, mime, name, getBytes: () => bytes }; },
       formatDate: (d, tz, f) => {
         const iso = new Date(d.getTime()).toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T');
+        if (f === 'H') return String(Number(iso.slice(11, 13)));
         return f === 'yyyy-MM-dd' ? iso.slice(0, 10) : iso;
       }
     },

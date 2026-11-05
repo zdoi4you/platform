@@ -189,7 +189,7 @@ function regOrg_(raw) {
 const opActor_ = ctx => 'оператор ' + ctx.username;
 
 function usersPublic_(ss) {
-  return publicRows_(read_(ss, 'users')).map(u => { const o = Object.assign({}, u); o.pending = !!u.inviteExp; delete o.inviteExp; o.perms = Object.keys(permsOf_(u)); return o; });
+  return publicRows_(read_(ss, 'users')).map(u => { const o = Object.assign({}, u); o.pending = !!u.inviteExp; delete o.inviteExp; delete o.notify; o.perms = Object.keys(permsOf_(u)); return o; });
 }
 
 function opOrgGet_(d, ctx) {
@@ -580,7 +580,8 @@ function orgBootstrap_(d, ctx) {
   const me = read_(ss, 'users').find(u => u.username === ctx.username);
   return {
     profile: profile_(ss), users: users, signers: signersOf_(ss), grounds: groundsOf_(ss), departments: departmentsOf_(ss), addressees: addresseesOf_(ss, ctx), plan: orgPlan_(ctx.org),
-    me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false, perms: permsOf_(me) }
+    me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false, perms: permsOf_(me), email: me.email, notify: notifyOf_(me) },
+    remindersOn: remindersOn_()
   };
 }
 

@@ -123,14 +123,19 @@ function caseCreate_(d, ctx) {
     const y = v.regDate.slice(0, 4);
     do { regNo = 'ЗДОИ-' + y + '-' + String(nextCounter_(ss, 'case-' + y)).padStart(4, '0'); } while (rows.some(c => c.regNo === regNo));
   }
+  checkOwner_(ss, v.owner, '');
   insert_(ss, 'cases', Object.assign({ regNo: regNo, createdAt: stamp_(), createdBy: ctx.username, status: 'Нова', outcome: '', updatedAt: stamp_() }, v));
   event_(ss, regNo, ctx.username, 'Създаване', 'Преписката е въведена.');
   audit_(ss, ctx.username, 'Нова преписка', regNo, '');
+  notifyAssigned_(ctx, regNo, v.owner);
+  notifyCase_(ctx, { regNo: regNo, owner: v.owner }, ['status'], 'Въведена е нова преписка.', true);
   return { regNo: regNo };
 }
 
 function caseUpdate_(d, ctx) {
   const ss = ctx.ss(), c = visibleCase_(ss, d.regNo, ctx), v = caseFields_(d);
+  // отговорникът се определя отделно (case.assign); липсващото поле не го премахва
+  v.owner = d.owner === undefined ? c.owner : checkOwner_(ss, v.owner, c.owner);
   Object.assign(v, {
     status: oneOf_(d.status, CASE_STATUS, 'Статус'), outcome: oneOf_(d.outcome || '', CASE_OUTCOME, 'Резултат'),
     clarifyAsked: isoDate_(d.clarifyAsked), clarifyGot: isoDate_(d.clarifyGot), thirdAsked: isoDate_(d.thirdAsked), thirdGot: isoDate_(d.thirdGot),
@@ -149,6 +154,8 @@ function caseUpdate_(d, ctx) {
   patch_(ss, 'cases', c._row, patch);
   const fields = SCHEMA.cases[1];
   event_(ss, c.regNo, ctx.username, 'Промяна', changed.map(k => fields[k] + (['subject', 'appealNote'].indexOf(k) >= 0 ? '' : ': ' + (v[k] || '—'))).join('; '));
+  if (patch.owner !== undefined) notifyAssigned_(ctx, c.regNo, patch.owner);
+  if (patch.status !== undefined) notifyCase_(ctx, Object.assign({}, c, patch), ['status'], 'Нов статус: ' + patch.status);
   return { regNo: c.regNo };
 }
 
@@ -163,6 +170,7 @@ function caseComment_(d, ctx) {
   const ss = ctx.ss(), c = visibleCase_(ss, d.regNo, ctx), text = str_(d.text, 2000);
   if (!text) fail_('required', 'Напишете текст.');
   event_(ss, c.regNo, ctx.username, 'Коментар', text);
+  notifyCase_(ctx, c, ['comments'], 'Добавен е вътрешен коментар.');
   return {};
 }
 
@@ -307,6 +315,8 @@ function docCreate_(d, ctx) {
     patch.updatedAt = stamp_();
     patch_(ss, 'cases', c._row, patch);
     event_(ss, c.regNo, ctx.username, 'Документ', title + (source ? ', изх.' : '') + ' № ' + no + (def.department ? (type === 'internalReply' ? ' от ' : ' до ') + f.department + (f.by ? ', срок до ' + f.by : '') : ''));
+    const nextStatus = patch.status && patch.status !== c.status ? patch.status : '';
+    notifyCase_(ctx, c, nextStatus ? ['docs', 'status'] : ['docs'], 'Издаден документ: ' + title + ' № ' + no + (nextStatus ? '\nНов статус: ' + nextStatus : ''));
   }
   audit_(ss, ctx.username, 'Генериран документ', no, type);
   return { id: id, no: no, payload: payload };
