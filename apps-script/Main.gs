@@ -195,6 +195,15 @@ function setup() {
   return master.getUrl();
 }
 
+/* проверка на връзката с Microsoft 365: изпълнява се от редактора и не преминава към Google при грешка */
+function msTest() {
+  const c = msConfig_();
+  if (!c) throw new Error('Липсват свойства на скрипта: MS_TENANT, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_SENDER.');
+  const to = String(Session.getEffectiveUser().getEmail());
+  msSend_(c, to, 'ЗДОИ4You Платформа – проверка на пощата', 'Връзката с Microsoft 365 работи. Това писмо е изпратено от ' + c.sender + '.');
+  console.log('Изпратено от ' + c.sender + ' до ' + to);
+}
+
 /* забравена парола на оператор: изпълнява се от редактора, връзката се вижда само в журнала */
 function operatorReset() {
   const m = master_(), op = read_(m, 'ops').find(x => x.username === 'admin');

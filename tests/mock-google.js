@@ -56,7 +56,8 @@ class Book {
 function load() {
   const books = new Map(), mails = [], cache = new Map(), props = new Map();
   const files = new Map(), folders = new Map();
-  let seq = 0, clockOffset = 0;
+  const fetches = [];
+  let seq = 0, clockOffset = 0, fetchHandler = null;
   const addFile = (blob, folder) => { const fid = 'file' + (++seq); files.set(fid, { blob, folder, trashed: false }); return { getId: () => fid }; };
   const now = () => Date.now() + clockOffset;
   const signed = buf => Array.from(buf).map(b => (b > 127 ? b - 256 : b));
@@ -102,6 +103,7 @@ function load() {
         : { moveTo(folder) { books.get(id).folder = folder.id; } })
     },
     MailApp: { sendEmail: m => { mails.push(m); } },
+    UrlFetchApp: { fetch: (url, opts) => { fetches.push({ url, opts }); const r = fetchHandler ? fetchHandler(url, opts) : { code: 500, body: '{}' }; return { getResponseCode: () => r.code, getContentText: () => r.body }; } },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: t => ({ text: t, setMimeType() { return this; } }) },
     Session: { getEffectiveUser: () => ({ getEmail: () => 'owner@example.org' }) }
   };
@@ -119,7 +121,7 @@ function load() {
   const src = fs.readdirSync(dir).filter(f => f.endsWith('.gs')).sort().map(f => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
   vm.runInContext(src + '\nthis.resetHeaders = () => { Object.keys(HEADERS_CHECKED_).forEach(k => delete HEADERS_CHECKED_[k]); };\nthis.__perms = { all: PERMS, staff: STAFF_PERMS };\nthis.__t = { term_, validEik_, safeCell_, readCell_, luhn_, holidays_, DOC_TYPES, REFUSAL, GROUNDS };', ctx, { filename: 'apps-script.js' });
   return {
-    ctx, books, mails, props, files, folders,
+    ctx, books, mails, props, files, folders, fetches, setFetch: h => { fetchHandler = h; },
     setup: () => ctx.setup(),
     call: (action, data, token) => JSON.parse(JSON.stringify(ctx.dispatch_({ action, data, token }))),
     advance: ms => { clockOffset += ms; },

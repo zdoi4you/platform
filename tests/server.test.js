@@ -1278,3 +1278,68 @@ test('department reply keeps the filled answers and is linked to the department'
   assert.equal(r.payload.f.department, 'Правен отдел');
   assert.ok(g.call('case.get', { regNo: reg }, a.token).events.some(e => e.text.includes('от Правен отдел')));
 });
+
+function microsoft(g, send) {
+  g.props.set('MS_TENANT', 'tenant-id'); g.props.set('MS_CLIENT_ID', 'client-id'); g.props.set('MS_CLIENT_SECRET', 'тайна-стойност'); g.props.set('MS_SENDER', 'no-reply@platform.zdoi4you.eu');
+  g.setFetch(url => (url.includes('login.microsoftonline.com') ? { code: 200, body: JSON.stringify({ access_token: 'token-1', expires_in: 3600 }) } : send(url)));
+}
+
+test('mail goes through Google until Microsoft 365 is configured', () => {
+  const g = load(); operator(g);
+  g.mails.length = 0;
+  assert.equal(apply(g).ok, true);
+  assert.equal(g.fetches.length, 0);
+  assert.ok(g.mails.length > 0);
+});
+
+test('mail goes through Microsoft Graph from the configured mailbox, with reply-to and no sent copy', () => {
+  const g = load(); operator(g);
+  microsoft(g, () => ({ code: 202, body: '' }));
+  g.mails.length = 0; g.fetches.length = 0;
+  assert.equal(apply(g).ok, true);
+  assert.equal(g.mails.length, 0, 'не минава през Google');
+  const token = g.fetches.filter(f => f.url.includes('login.microsoftonline.com'));
+  const sends = g.fetches.filter(f => f.url.includes('graph.microsoft.com'));
+  assert.equal(token.length, 1, 'токенът се използва повторно');
+  assert.ok(token[0].url.includes('/tenant-id/oauth2/v2.0/token'));
+  assert.equal(token[0].opts.payload.grant_type, 'client_credentials');
+  assert.ok(sends.length >= 1);
+  assert.ok(sends[0].url.endsWith('/users/no-reply%40platform.zdoi4you.eu/sendMail'));
+  assert.equal(sends[0].opts.headers.Authorization, 'Bearer token-1');
+  const body = JSON.parse(sends[0].opts.payload);
+  assert.equal(body.saveToSentItems, false, 'връзките не остават в кутията');
+  assert.equal(body.message.toRecipients[0].emailAddress.address, 'obshtina@example.org');
+  assert.equal(body.message.replyTo[0].emailAddress.address, 'support@platform.zdoi4you.eu');
+  assert.ok(body.message.body.content.includes('БУЛАДМИН'));
+  assert.ok(!sends[0].opts.payload.includes('тайна-стойност'), 'тайната не излиза в писмото');
+});
+
+test('if Microsoft refuses, the message still goes out through Google and the token is renewed', () => {
+  const g = load(); operator(g);
+  microsoft(g, () => ({ code: 403, body: JSON.stringify({ error: { code: 'ErrorAccessDenied', message: 'x' } }) }));
+  g.mails.length = 0;
+  assert.equal(apply(g).ok, true);
+  assert.ok(g.mails.some(m => m.to === 'obshtina@example.org'), 'писмото не се губи');
+  microsoft(g, () => ({ code: 401, body: '{}' }));
+  g.fetches.length = 0;
+  g.ctx.mail_('a@example.org', 'Тема', 'Текст');
+  g.ctx.mail_('a@example.org', 'Тема', 'Текст');
+  assert.equal(g.fetches.filter(f => f.url.includes('login.microsoftonline.com')).length, 1, 'след 401 токенът се иска наново');
+  g.setFetch(url => (url.includes('login.microsoftonline.com') ? { code: 401, body: JSON.stringify({ error: 'invalid_client' }) } : { code: 202, body: '' }));
+  g.ctx.CacheService.getScriptCache().remove('ms:token');
+  g.mails.length = 0;
+  assert.equal(g.ctx.mail_('b@example.org', 'Тема', 'Текст'), true, 'изтекла тайна');
+  assert.ok(g.mails.some(m => m.to === 'b@example.org'));
+});
+
+test('the connection check reports a missing configuration and never falls back to Google', () => {
+  const g = load(); operator(g);
+  assert.throws(() => g.ctx.msTest(), /Липсват свойства/);
+  microsoft(g, () => ({ code: 403, body: JSON.stringify({ error: { code: 'ErrorAccessDenied' } }) }));
+  g.mails.length = 0;
+  assert.throws(() => g.ctx.msTest(), /403 ErrorAccessDenied/);
+  assert.equal(g.mails.length, 0);
+  microsoft(g, () => ({ code: 202, body: '' }));
+  g.ctx.msTest();
+  assert.equal(g.mails.length, 0);
+});

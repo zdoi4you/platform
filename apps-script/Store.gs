@@ -188,9 +188,68 @@ function validEik_(raw) {
 
 /* ---------- имейл ---------- */
 
-function mail_(to, subject, body) {
+/*
+ * Писмата излизат от пощенската кутия в Microsoft 365, когато в свойствата на скрипта има MS_TENANT, MS_CLIENT_ID,
+ * MS_CLIENT_SECRET и MS_SENDER. Без тях, или ако Microsoft откаже, излизат през Google, за да не се губят връзките за достъп.
+ */
+function msConfig_() {
+  const p = PropertiesService.getScriptProperties();
+  const c = { tenant: p.getProperty('MS_TENANT'), clientId: p.getProperty('MS_CLIENT_ID'), secret: p.getProperty('MS_CLIENT_SECRET'), sender: p.getProperty('MS_SENDER') };
+  return c.tenant && c.clientId && c.secret && c.sender ? c : null;
+}
+
+function msToken_(c) {
+  const cache = CacheService.getScriptCache(), hit = cache.get('ms:token');
+  if (hit) return hit;
+  const r = UrlFetchApp.fetch('https://login.microsoftonline.com/' + encodeURIComponent(c.tenant) + '/oauth2/v2.0/token', {
+    method: 'post', muteHttpExceptions: true,
+    payload: { client_id: c.clientId, client_secret: c.secret, scope: 'https://graph.microsoft.com/.default', grant_type: 'client_credentials' }
+  });
+  if (r.getResponseCode() !== 200) throw new Error('токен: ' + r.getResponseCode() + ' ' + msError_(r));
+  const t = JSON.parse(r.getContentText());
+  cache.put('ms:token', t.access_token, Math.max(60, Math.min(21600, (Number(t.expires_in) || 3600) - 300)));
+  return t.access_token;
+}
+
+/* само кодът на грешката: отговорът не се записва целият в журнала */
+function msError_(r) {
   try {
-    MailApp.sendEmail({ to: to, subject: line_(subject, 200), body: body + '\n\n--\n' + CFG.MAINTAINER + '\nПоддръжка: ' + CFG.SUPPORT, name: 'ЗДОИ4You Платформа', replyTo: CFG.SUPPORT });
+    const e = JSON.parse(r.getContentText());
+    return String((e.error && e.error.code) || e.error || '').slice(0, 80);
+  } catch (_) { return ''; }
+}
+
+/* писмата не се пазят в „Изпратени“, защото съдържат еднократни връзки за парола */
+function msSend_(c, to, subject, text) {
+  const r = UrlFetchApp.fetch('https://graph.microsoft.com/v1.0/users/' + encodeURIComponent(c.sender) + '/sendMail', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + msToken_(c) },
+    payload: JSON.stringify({
+      message: {
+        subject: subject, body: { contentType: 'Text', content: text },
+        toRecipients: [{ emailAddress: { address: to } }], replyTo: [{ emailAddress: { address: CFG.SUPPORT } }]
+      },
+      saveToSentItems: false
+    })
+  });
+  const code = r.getResponseCode();
+  if (code === 401) CacheService.getScriptCache().remove('ms:token');
+  if (code !== 202) throw new Error('изпращане: ' + code + ' ' + msError_(r));
+}
+
+function mail_(to, subject, body) {
+  const title = line_(subject, 200), text = body + '\n\n--\n' + CFG.MAINTAINER + '\nПоддръжка: ' + CFG.SUPPORT;
+  const ms = msConfig_();
+  if (ms) {
+    try {
+      msSend_(ms, to, title, text);
+      return true;
+    } catch (e) {
+      console.error('microsoft: ' + e.message);
+    }
+  }
+  try {
+    MailApp.sendEmail({ to: to, subject: title, body: text, name: 'ЗДОИ4You Платформа', replyTo: CFG.SUPPORT });
     return true;
   } catch (e) {
     console.error('mail: ' + e);
