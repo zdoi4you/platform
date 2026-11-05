@@ -177,6 +177,7 @@ const DOC_TYPES = {
   extend31: { cls: 'ИЗХ', groundScope: 'letter', need: ['days', 'third'], apply: (c, f) => ({ ext31: limitDays_(f.days, 14, 'чл. 31'), status: 'Чака трето лице' }) },
   thirdparty: { cls: 'ИЗХ', groundScope: 'letter', need: ['third', 'thirdAddress', 'info', 'by'], apply: (c, f, p) => ({ thirdAsked: p.date, status: 'Чака трето лице' }) },
   forward: { cls: 'ИЗХ', groundScope: 'letter', need: ['body', 'bodyAddress'], apply: () => ({ outcome: 'Препратено (чл. 32)', status: 'Приключена' }) },
+  forwardBody: { cls: 'ИЗХ', groundScope: 'letter', need: ['body', 'bodyAddress', 'attachments'], apply: () => ({}) },
   noinfo: { cls: 'ИЗХ', groundScope: 'letter', need: [], apply: () => ({ outcome: 'Няма информация (чл. 33)', status: 'Приключена' }) },
   dismiss: { cls: 'ИЗХ', groundScope: 'dismiss', groundNeeded: true, need: [], apply: () => ({ outcome: 'Без разглеждане', status: 'Приключена' }) },
   letter: { cls: 'ИЗХ', groundScope: 'letter', need: ['subjectLine', 'text'], apply: () => ({}) },
@@ -184,6 +185,10 @@ const DOC_TYPES = {
   partial: { cls: 'РЕШ', decision: true, groundScope: 'refuse', groundNeeded: true, need: ['scope', 'withheld', 'factual', 'court', 'accessDays', 'place', 'accessForm', 'costs'], apply: () => ({ outcome: 'Частичен достъп', status: 'Решение издадено' }) },
   refuse: { cls: 'РЕШ', decision: true, groundScope: 'refuse', groundNeeded: true, need: ['factual', 'court'], apply: () => ({ outcome: 'Отказ', status: 'Решение издадено' }) },
   protocol: { cls: 'ПРТ', need: ['given', 'accessForm', 'employee'], apply: () => ({ status: 'Приключена' }) },
+  cover: { cls: 'ИЗХ', maybeCase: true, need: ['toName', 'attachments'], apply: () => ({}) },
+  internalRequest: { cls: 'ВТР', department: true, need: ['departmentId', 'what', 'by'], apply: () => ({}) },
+  internalReply: { cls: 'ВТР', department: true, need: ['departmentId'], apply: () => ({}) },
+  internalNote: { cls: 'ВТР', need: ['fromName', 'subjectLine', 'text'], apply: () => ({}) },
   report: { cls: 'ОТЧ', noCase: true, need: ['year'], apply: null },
   art15: { cls: 'ЧЛ15', noCase: true, need: [], apply: null }
 };
@@ -235,13 +240,29 @@ function docCreate_(d, ctx) {
   const raw = d.fields && typeof d.fields === 'object' ? d.fields : {};
   const f = {};
   Object.keys(raw).slice(0, 40).forEach(k => { f[str_(k, 40)] = str_(raw[k], k === 'edits' ? 40000 : 8000); });
-  const c = def.noCase ? null : visibleCase_(ss, d.regNo, ctx);
+  // съпроводителното писмо следва документа, който придружава: номер, дата и преписка идват от него
+  ['ofNo', 'ofDate', 'ofTitle', 'department', 'departmentHead', 'departmentPosition'].forEach(k => delete f[k]);
+  let source = null;
+  if (type === 'cover') {
+    source = read_(ss, 'docs').find(x => x.id === str_(d.ofId, 16));
+    if (!source || !docVisible_(source, ctx, read_(ss, 'cases'))) fail_('notfound', 'Документът не е намерен.');
+    if (source.type === 'cover') fail_('value', 'Съпроводително писмо не се издава към съпроводително писмо.');
+    f.ofNo = source.no; f.ofDate = source.date; f.ofTitle = source.title;
+  }
+  const regNo = source ? source.regNo : d.regNo;
+  const c = def.noCase || (def.maybeCase && !regNo) ? null : visibleCase_(ss, regNo, ctx);
   if (def.decision) {
     if (!f.court && c && oblastOfCase_(c)) f.court = courtForOblast_(oblastOfCase_(c));
     if (f.court && OBLASTS_.map(courtForOblast_).indexOf(f.court) < 0) fail_('court', 'Изберете административен съд от списъка.');
     if (!f.court) fail_('court', 'Посочете компетентния административен съд според адреса на адресата.');
   }
   def.need.forEach(k => { if (!f[k]) fail_('required', 'Попълнете всички задължителни полета.'); });
+  if (f.signMode && ['electronic'].indexOf(f.signMode) < 0) fail_('value', 'Невалиден начин на подписване.');
+  if (def.department) {
+    const dep = read_(ss, 'departments').find(x => x.id === f.departmentId);
+    if (!dep || dep.active !== 'Да') fail_('department', 'Изберете отдел от списъка.');
+    f.department = dep.name; f.departmentHead = dep.head; f.departmentPosition = dep.position;
+  }
   // подписващият идва само от списъка на организацията; ръчно подадено име се пренебрегва
   ['signer', 'signerPosition', 'signerAct'].forEach(k => delete f[k]);
   ['by'].forEach(k => { if (f[k]) f[k] = isoDate_(f[k]); });
@@ -263,6 +284,7 @@ function docCreate_(d, ctx) {
     }
     f.signer = s.name; f.signerPosition = s.position; f.signerAct = s.act;
   }
+  const title = type === 'cover' ? 'Съпроводително писмо към № ' + source.no : line_(d.title, 200) || type;
   const no = line_(d.no, 60) || def.cls + '-' + year + '-' + String(nextCounter_(ss, 'doc-' + def.cls + '-' + year)).padStart(4, '0');
   const payload = { type: type, no: no, date: date, org: org, f: f };
   if (c) {
@@ -276,7 +298,7 @@ function docCreate_(d, ctx) {
   if (json.length > 49000) fail_('size', 'Документът е твърде голям за запис (клетка в Google таблица побира до 50 000 знака). Съкратете текстовете.');
   const id = randomToken_().slice(0, 16);
   insert_(ss, 'docs', {
-    id: id, no: no, type: type, title: line_(d.title, 200) || type, regNo: c ? c.regNo : '', date: date, at: stamp_(), author: ctx.username,
+    id: id, no: no, type: type, title: title, regNo: c ? c.regNo : '', date: date, at: stamp_(), author: ctx.username,
     payload: json
   });
   if (c) {
@@ -284,7 +306,7 @@ function docCreate_(d, ctx) {
     if (def.decision) { patch.decisionNo = no; patch.decisionDate = date; if (def.groundNeeded && chosen.keys.length) patch.refusalGround = chosen.keys.join(','); }
     patch.updatedAt = stamp_();
     patch_(ss, 'cases', c._row, patch);
-    event_(ss, c.regNo, ctx.username, 'Документ', (line_(d.title, 200) || type) + ' № ' + no);
+    event_(ss, c.regNo, ctx.username, 'Документ', title + ' № ' + no + (def.department ? ' до ' + f.department + (f.by ? ', срок до ' + f.by : '') : ''));
   }
   audit_(ss, ctx.username, 'Генериран документ', no, type);
   return { id: id, no: no, payload: payload };
@@ -292,7 +314,7 @@ function docCreate_(d, ctx) {
 
 /* документ без преписка се вижда с правото за него, а останалите с правото да се вижда преписката */
 function docVisible_(doc, ctx, cases) {
-  if (!doc.regNo) return !!ctx.perms[doc.type === 'report' ? 'reports' : 'art15'];
+  if (!doc.regNo) return !!ctx.perms[doc.type === 'report' ? 'reports' : doc.type === 'cover' ? 'letters' : 'art15'];
   if (ctx.perms.casesAll) return true;
   const c = cases.find(x => x.regNo === doc.regNo);
   return !!c && canSee_(c, ctx);

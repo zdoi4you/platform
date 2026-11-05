@@ -194,7 +194,7 @@ function usersPublic_(ss) {
 
 function opOrgGet_(d, ctx) {
   const org = regOrg_(d.no), book = orgSheet_(org);
-  return { no: org.no, status: org.status, plan: org.plan, plans: plansOf_(master_()), logins: loginRows_(book, 100), profile: profile_(book), users: usersPublic_(book), signers: signersOf_(book), grounds: groundsOf_(book) };
+  return { no: org.no, status: org.status, plan: org.plan, plans: plansOf_(master_()), logins: loginRows_(book, 100), profile: profile_(book), users: usersPublic_(book), signers: signersOf_(book), grounds: groundsOf_(book), departments: departmentsOf_(book) };
 }
 
 /* ---------- собствени правни основания на организацията ---------- */
@@ -226,6 +226,39 @@ function groundsSave_(d, ctx) {
 function opGroundSave_(d, ctx) {
   const reg = regOrg_(d.no), r = saveGround_(orgSheet_(reg), d, opActor_(ctx));
   audit_(master_(), ctx.username, 'Правно основание в организация', reg.no, line_(d.text, 200));
+  return r;
+}
+
+/* ---------- отдели на организацията: адресати на вътрешните бланки ---------- */
+
+const departmentsOf_ = ss => read_(ss, 'departments').map(s => { const o = Object.assign({}, s); delete o._row; return o; });
+
+function saveDepartment_(ss, d, actor) {
+  const v = { name: line_(d.name, 160), head: line_(d.head, 120), position: line_(d.position, 120), email: line_(d.email, 200), active: d.active === false ? 'Не' : 'Да' };
+  if (!v.name) fail_('required', 'Напишете наименованието на отдела.');
+  if (v.email && !isEmail_(v.email)) fail_('email', 'Невалиден имейл на отдела.');
+  const rows = read_(ss, 'departments'), id = str_(d.id, 24);
+  if (rows.some(x => x.id !== id && x.name.toLowerCase() === v.name.toLowerCase())) fail_('duplicate', 'Вече има отдел с това наименование.');
+  if (id) {
+    const cur = rows.find(x => x.id === id);
+    if (!cur) fail_('notfound', 'Отделът не е намерен.');
+    patch_(ss, 'departments', cur._row, v);
+    audit_(ss, actor, 'Променен отдел', v.name, '');
+    return { id: id };
+  }
+  const newId = 'o' + randomToken_().slice(0, 15);
+  insert_(ss, 'departments', Object.assign({ id: newId, by: actor, at: stamp_() }, v));
+  audit_(ss, actor, 'Добавен отдел', v.name, '');
+  return { id: newId };
+}
+
+function departmentsSave_(d, ctx) {
+  return saveDepartment_(ctx.ss(), d, ctx.username);
+}
+
+function opDepartmentSave_(d, ctx) {
+  const reg = regOrg_(d.no), r = saveDepartment_(orgSheet_(reg), d, opActor_(ctx));
+  audit_(master_(), ctx.username, 'Отдел в организация', reg.no, line_(d.name, 160));
   return r;
 }
 
@@ -546,7 +579,7 @@ function orgBootstrap_(d, ctx) {
   const users = read_(ss, 'users').filter(u => u.active === 'Да').map(u => ({ username: u.username, name: u.name }));
   const me = read_(ss, 'users').find(u => u.username === ctx.username);
   return {
-    profile: profile_(ss), users: users, signers: signersOf_(ss), grounds: groundsOf_(ss), addressees: addresseesOf_(ss, ctx), plan: orgPlan_(ctx.org),
+    profile: profile_(ss), users: users, signers: signersOf_(ss), grounds: groundsOf_(ss), departments: departmentsOf_(ss), addressees: addresseesOf_(ss, ctx), plan: orgPlan_(ctx.org),
     me: { no: ctx.no, org: ctx.org.name, username: ctx.username, name: me.name, position: me.position, role: me.role, operator: false, perms: permsOf_(me) }
   };
 }

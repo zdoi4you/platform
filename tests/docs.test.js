@@ -5,7 +5,7 @@ const { load } = require('./mock-google');
 
 const org = { name: 'Община Тест', basis: 'чл. 3, ал. 1', eik: '000696327', postcode: '1000', city: 'София', address: 'ул. 1', phone: '02', email: 'a@b.bg', web: 'https://a.bg', headName: 'Иван Иванов', headPosition: 'Кмет', unitName: 'Деловодство', unitAddress: 'ул. 1', unitEmail: 'z@b.bg', unitPhone: '02', unitHours: '9–17', court: 'Административен съд София-град' };
 const kase = { regNo: 'ЗДОИ-2026-0001', regDate: '2026-11-02', applicantName: 'Петър Петров', applicantType: 'Гражданин', applicantAddress: 'ул. 2', subject: 'Договори', form: '' };
-const fields = { what: 'x', days: '10', reason: 'x', third: 'Трето лице', thirdAddress: 'адрес', info: 'x', by: '2026-11-20', body: 'Орган', bodyAddress: 'адрес', ground: 'чл. 25, ал. 2', subjectLine: 'тема', text: 'текст', scope: 'пълен', accessDays: '30', place: 'място', accessForm: 'устна справка', costs: 'няма', withheld: 'част', groundKey: 't1', groundText: 'чл. 37, ал. 1, т. 1 ЗДОИ – основание', factual: 'факти', given: 'копия', employee: 'Служител', year: '2025' };
+const fields = { what: 'x', days: '10', reason: 'x', third: 'Трето лице', thirdAddress: 'адрес', info: 'x', by: '2026-11-20', body: 'Орган', bodyAddress: 'адрес', ground: 'чл. 25, ал. 2', subjectLine: 'тема', text: 'текст', scope: 'пълен', accessDays: '30', place: 'място', accessForm: 'устна справка', costs: 'няма', withheld: 'част', groundKey: 't1', groundText: 'чл. 37, ал. 1, т. 1 ЗДОИ – основание', factual: 'факти', given: 'копия', employee: 'Служител', year: '2025', attachments: '1. Заявление\nРешение № 5', toName: 'Получател', toAddress: 'адрес', ofNo: 'РЕШ-1', ofDate: '2026-11-03', ofTitle: 'Решение', departmentId: 'o1', department: 'Правен отдел', departmentHead: 'Анна Иванова', departmentPosition: 'Началник', fromName: 'Служител Тест', fromPosition: 'Експерт' };
 const stats = { year: '2025', total: 1, access: 1, reuse: 0, byApplicant: { Гражданин: 1 }, byChannel: { Писмено: 1 }, byOutcome: { Отказ: 1 }, refusals: 1, grounds: { x: 1 }, appealed: 0, late: 0, published: 0 };
 
 const flatten = n => (n === null || n === undefined ? '' : typeof n === 'string' ? n : Array.isArray(n) ? n.map(flatten).join(' ') : typeof n === 'object' ? [n.text, n.stack, n.columns, n.ol, n.table && n.table.body].map(flatten).join(' ') : String(n));
@@ -152,4 +152,54 @@ test('an authorized person is shown with the act under the signature', () => {
 test('article 15 list depends on the basis of the organization', () => {
   assert.equal(Docs.art15Items('чл. 3, ал. 1').length, 17);
   assert.deepEqual(Docs.art15Items('чл. 3, ал. 2, т. 1').map(i => i[0]), [1, 4, 5, 6, 8, 11, 15, 16, 17]);
+});
+
+const textOf = (type, f) => flatten(Docs.pdfDefinition({ type, no: 'X-1', date: '2026-11-04', org, case: kase, f: Object.assign({}, fields, f), stats, items: [] }, 'data:image/png;base64,AA==').content);
+
+test('forwarding letter to the other obligated entity names the body, the law and the attachments', () => {
+  const t = textOf('forwardBody', {});
+  assert.ok(t.includes('Орган') && t.includes('чл. 32, ал. 1') && t.includes('чл. 32, ал. 2'));
+  assert.ok(t.includes('Приложения:') && t.includes('Заявление') && t.includes('Решение № 5'));
+  assert.ok(!t.includes('1. Заявление'), 'номерацията не се удвоява');
+  assert.ok(t.includes('се уведомява за препращането'));
+  assert.ok(textOf('forwardBody', { notice: 'ИЗХ-7 от 03.11.2026 г.' }).includes('с писмо ИЗХ-7 от 03.11.2026 г.'));
+});
+
+test('cover letter refers to the document it accompanies, with or without a case', () => {
+  const t = textOf('cover', { note: 'Бележка' });
+  assert.ok(t.includes('Получател') && t.includes('„Решение“ № РЕШ-1') && t.includes('Приложения:') && t.includes('Бележка'));
+  assert.ok(textOf('cover', { toName: kase.applicantName }).includes('Уважаеми/а'));
+  const noCase = flatten(Docs.pdfDefinition({ type: 'cover', no: 'X', date: '2026-11-04', org, f: fields }, 'data:image/png;base64,AA==').content);
+  assert.ok(noCase.includes('Получател') && !/undefined/.test(noCase));
+});
+
+test('internal forms address the department', () => {
+  const r = textOf('internalRequest', { what: 'Договорите', by: '2026-11-20' });
+  assert.ok(r.includes('Правен отдел') && r.includes('Анна Иванова') && r.includes('Договорите') && r.includes('20.11.2026'));
+  assert.ok(textOf('internalReply', {}).includes('[   ] да'));
+  assert.ok(textOf('internalNote', { text: 'Първи\n\nВтори' }).includes('Служител Тест'));
+});
+
+test('signature: a line for manual signing, a note instead of the line for electronic signing', () => {
+  const LINE = '.........';
+  const all = Object.keys(Docs.DEFS).filter(k => !['report', 'art15'].includes(k));
+  for (const type of all) assert.ok(Docs.DEFS[type].fields.some(f => f.k === 'signMode'), type + ': няма избор на подпис');
+  for (const type of ['forwardBody', 'grant', 'refuse', 'cover', 'internalRequest', 'internalNote', 'report']) {
+    const manual = textOf(type, {}), electronic = textOf(type, { signMode: 'electronic' });
+    assert.ok(manual.includes(LINE) && !manual.includes('електронен подпис'), type);
+    assert.ok(electronic.includes('електронен подпис') && !electronic.includes(LINE), type);
+  }
+  const art = textOf('art15', { signMode: 'electronic' });
+  assert.ok(art.includes('електронен подпис'));
+  assert.ok(!textOf('art15', {}).includes(LINE));
+  const proto = textOf('protocol', { signMode: 'electronic' });
+  assert.ok(proto.includes('електронен подпис') && proto.includes(LINE), 'заявителят подписва протокола на ръка');
+});
+
+test('postal codes: known places, source and credit', () => {
+  const pc = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '../site/data/postcodes.json'), 'utf8'));
+  assert.equal(pc.codes['68134'], '1000'); assert.equal(pc.codes['10135'], '9000'); assert.equal(pc.codes['56784'], '4000'); assert.equal(pc.codes['00084'], '9135');
+  assert.ok(Object.keys(pc.codes).length > 5000);
+  assert.ok(Object.values(pc.codes).every(c => /^\d{4}$/.test(c)));
+  assert.ok(pc.source.includes('GeoNames'));
 });

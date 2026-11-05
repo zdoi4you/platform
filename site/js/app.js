@@ -131,8 +131,10 @@ function addressField(def, value, seat, ctx) {
   const initial = output.value, parsed = parseAddress(initial);
   quarter.value = parsed.quarter; street.value = parsed.street; number.value = parsed.rest.join(', ');
   if (!seat) postcode.value = parsed.postcode;
-  const note = h('small', null, 'Селища и райони: НСИ, ЕКАТТЕ. Улици и квартали: © OpenStreetMap contributors. Ако липсват, напишете ги ръчно.');
-  let data = null;
+  const note = h('small', null, 'Селища и райони: НСИ, ЕКАТТЕ. Улици и квартали: © OpenStreetMap contributors. Пощенски кодове: GeoNames (CC BY 4.0). Ако липсват или са неточни, напишете ги ръчно.');
+  let data = null, pcData = null, autoPc = '';
+  const pcHint = h('small', { hidden: true }, 'Предложен е общ код за населеното място. В големите градове проверете кода за конкретния адрес.');
+  fetchJson('data/postcodes.json').then(d => { pcData = d; }).catch(() => {});
 
   const current = () => {
     if (!data) return {};
@@ -182,6 +184,14 @@ function addressField(def, value, seat, ctx) {
     qList.replaceChildren(...d.quarters.map(n => h('option', { value: n })));
     sList.replaceChildren(...d.streets.map(n => h('option', { value: n })));
   };
+  /* попълва кода при избор на селище; въведен на ръка код не се заменя */
+  const fillPostcode = () => {
+    const { s } = current();
+    const code = (s && pcData && pcData.codes[s.e]) || '';
+    const free = !postcode.value.trim() || postcode.value.trim() === autoPc;
+    if (free) { postcode.value = code; autoPc = code; }
+    pcHint.hidden = !(free && code && s.n.startsWith('гр.'));
+  };
   const onPlace = () => {
     const { s } = current();
     const list = (s && data.raions[s.e]) || [];
@@ -191,11 +201,12 @@ function addressField(def, value, seat, ctx) {
   };
   const onMuni = keep => { const { m } = current(); fillSelect(place.select, m ? m.s.map(x => x.n) : [], keep); onPlace(); };
   const onOblast = (keepM, keepP) => { const { o } = current(); fillSelect(muni.select, o ? o.m.map(x => x.n) : [], keepM); onMuni(keepP); };
-  oblast.select.addEventListener('change', () => { if (oblastOut) oblastOut.value = oblast.select.value; onOblast(); compose(); });
-  muni.select.addEventListener('change', () => { onMuni(); compose(); });
-  place.select.addEventListener('change', () => { onPlace(); compose(); });
+  oblast.select.addEventListener('change', () => { if (oblastOut) oblastOut.value = oblast.select.value; onOblast(); fillPostcode(); compose(); });
+  muni.select.addEventListener('change', () => { onMuni(); fillPostcode(); compose(); });
+  place.select.addEventListener('change', () => { onPlace(); fillPostcode(); compose(); });
   raion.select.addEventListener('change', compose);
   [quarter, street, number, postcode].forEach(el => el.addEventListener('input', compose));
+  postcode.addEventListener('input', () => { pcHint.hidden = true; });
 
   fetchJson('data/places.json').then(d => {
     data = d;
@@ -218,7 +229,7 @@ function addressField(def, value, seat, ctx) {
     h('div', { class: 'addr-title' }, def.label, def.req ? h('span', { class: 'req', 'aria-hidden': 'true' }, ' *') : null),
     oblastOut,
     h('div', { class: 'form-grid' }, oblast.wrap, muni.wrap, place.wrap, raion.wrap,
-      h('label', { class: 'field' }, h('span', null, 'Пощенски код', seat && def.req ? h('span', { class: 'req', 'aria-hidden': 'true' }, ' *') : null), postcode),
+      h('label', { class: 'field' }, h('span', null, 'Пощенски код', seat && def.req ? h('span', { class: 'req', 'aria-hidden': 'true' }, ' *') : null), postcode, pcHint),
       h('label', { class: 'field' }, h('span', null, 'Ж.к. или квартал'), quarter, qList),
       h('label', { class: 'field' }, h('span', null, 'Улица или булевард'), street, sList),
       h('label', { class: 'field' }, h('span', null, 'Номер, блок, вход'), number)),
@@ -754,14 +765,14 @@ async function viewCase(regNo) {
     form.querySelectorAll('fieldset').forEach(f => { f.disabled = true; });
     form.querySelector('button[type=submit]').remove();
   }
-  const types = Object.entries(DEFS).filter(([k, d]) => k !== 'report' && k !== 'art15' && can(d.decision ? 'decisions' : 'letters'));
+  const types = Object.entries(DEFS).filter(([k, d]) => k !== 'report' && k !== 'art15' && !d.hidden && can(d.decision ? 'decisions' : 'letters'));
   const groups = [...new Set(types.map(([, d]) => d.group))];
   const pick = h('select', { 'aria-label': 'Вид документ' }, h('option', { value: '' }, 'Изберете документ…'),
     groups.map(g => h('optgroup', { label: g }, types.filter(([, d]) => d.group === g).map(([k, d]) => h('option', { value: k }, d.title)))));
   const docCard = h('div', { class: 'card stack' }, h('h2', null, 'Генериране на документ'), pick,
-    h('button', { class: 'btn primary', onclick: () => { if (pick.value) docDialog(pick.value, c, b); else toast('Изберете вид документ.'); } }, 'Продължи'));
+    h('button', { class: 'btn primary', onclick: () => { if (pick.value) docDialog(pick.value, c, b, { items: attachmentItems(r) }); else toast('Изберете вид документ.'); } }, 'Продължи'));
 
-  const docsCard = h('div', { class: 'card' }, h('h2', null, 'Документи по преписката'), h('br'), r.docs.length ? docList(r.docs) : h('p', { class: 'muted' }, 'Още няма документи.'));
+  const docsCard = h('div', { class: 'card' }, h('h2', null, 'Документи по преписката'), h('br'), r.docs.length ? docList(r.docs, () => viewCase(c.regNo).catch(showError)) : h('p', { class: 'muted' }, 'Още няма документи.'));
 
   const note = h('form', null, h('label', { class: 'field' }, h('span', null, 'Вътрешен коментар'), h('textarea', { name: 'text', rows: 2, required: true, maxlength: 2000 })), h('button', { class: 'btn sm block', type: 'submit' }, 'Добави'));
   submitter(note, async d => { await api('case.comment', { regNo: c.regNo, text: d.text }); viewCase(c.regNo).catch(showError); });
@@ -779,13 +790,57 @@ async function viewCase(regNo) {
       caseCourtsCard(c, r.courts), filesCard({ scope: 'case', ref: c.regNo, files: r.files, space: r.space, reload: () => viewCase(c.regNo).catch(showError) }), hist)));
 }
 
-function docList(rows) {
+function docList(rows, after) {
   return h('div', { class: 'stack' }, rows.map(d => {
     const def = DEFS[d.type] || { title: d.type };
     const btn = h('button', { class: 'btn sm' }, 'PDF');
     btn.addEventListener('click', () => withBusy(btn, async () => { const r = await api('doc.get', { id: d.id }); await downloadPdf(r.payload); }));
-    return h('div', { class: 'doc-row' }, h('div', null, h('div', null, def.title), h('div', { class: 'small muted mono' }, `№ ${d.no} · ${fmt(d.date)}`)), btn);
+    return h('div', { class: 'doc-row' }, h('div', null, h('div', null, d.type === 'cover' ? d.title : def.title), h('div', { class: 'small muted mono' }, `№ ${d.no} · ${fmt(d.date)}`)), h('div', { class: 'actions' }, coverButton(d, after), btn));
   }));
+}
+
+/* ---------- съпроводително писмо ---------- */
+
+const docLabel = d => `${d.type === 'cover' ? d.title : (DEFS[d.type] || {}).title || d.title} № ${d.no} от ${fmt(d.date)}`;
+const attachmentItems = r => r.docs.filter(d => d.type !== 'cover').map(docLabel).concat(r.files.map(f => f.name));
+
+function coverButton(d, after) {
+  if (d.type === 'cover' || !can('letters')) return null;
+  const btn = h('button', { class: 'btn sm', type: 'button' }, 'Съпроводително писмо');
+  btn.addEventListener('click', () => withBusy(btn, () => coverDialog(d.id, after)));
+  return btn;
+}
+
+/* получателят се предлага от самия документ и може да се промени */
+function coverRecipient(p) {
+  const f = p.f, c = p.case;
+  if (p.type === 'thirdparty') return [f.third, f.thirdAddress];
+  if (p.type === 'forwardBody') return [f.body, f.bodyAddress];
+  if (/^internal(Request|Reply)$/.test(p.type)) return [f.department, ''];
+  if (p.type === 'internalNote') return [p.org.headName, ''];
+  return c ? [c.applicantName, c.applicantAddress || c.applicantEmail || ''] : ['', ''];
+}
+
+async function coverDialog(id, after) {
+  const [{ payload: p }, b] = await Promise.all([api('doc.get', { id }), boot()]);
+  const details = p.case ? await api('case.get', { regNo: p.case.regNo }) : null;
+  const title = (DEFS[p.type] || {}).title || p.type;
+  const [toName, toAddress] = coverRecipient(p);
+  docDialog('cover', p.case || null, b, {
+    ofId: id, after, items: details ? attachmentItems(details) : [],
+    preset: { toName, toAddress, signMode: p.f.signMode || '', attachments: `${title} № ${p.no} от ${fmt(p.date)}` },
+    draft: { ofNo: p.no, ofDate: p.date, ofTitle: title }
+  });
+}
+
+/* приложенията са по един на ред; файловете и документите по преписката се добавят с един клик */
+function attachmentsField(def, value, items) {
+  const area = h('textarea', { name: def.k, required: !!def.req, rows: 3, maxlength: 4000 });
+  area.value = value || '';
+  const add = t => { area.value = (area.value.trim() ? area.value.trim() + '\n' : '') + t; };
+  return h('div', { class: 'field full' },
+    h('label', { class: 'field' }, h('span', null, def.label, def.req ? h('span', { class: 'req', 'aria-hidden': 'true' }, ' *') : null), area, h('small', null, 'По едно приложение на ред.')),
+    (items || []).length ? h('div', { class: 'attach-chips' }, h('span', { class: 'small muted' }, 'Добави:'), items.map(t => h('button', { class: 'btn sm', type: 'button', onclick: () => add(t) }, '+ ' + t))) : null);
 }
 async function withBusy(btn, fn) {
   btn.disabled = true;
@@ -823,9 +878,11 @@ function groundsField(def, boot) {
 }
 
 /* първа стъпка: данни; втора стъпка: преглед и допълване на абзаците преди PDF */
-function docDialog(type, c, boot) {
+function docDialog(type, c, boot, options) {
+  const opts = options || {};
   const def = DEFS[type], org = boot.profile;
-  const initial = f => (typeof f.value === 'function' ? f.value(c, org) : f.value);
+  const initial = f => (opts.preset && f.k in opts.preset ? opts.preset[f.k] : typeof f.value === 'function' ? f.value(c, org, boot) : f.value);
+  const activeDepartments = (boot.departments || []).filter(x => x.active === 'Да').map(x => [x.id, x.name]);
   const today = todayIso();
   const form = h('form', null,
     h('h2', null, def.title),
@@ -837,7 +894,7 @@ function docDialog(type, c, boot) {
         form.querySelector('[name="' + def.book[0] + '"]').value = a.name;
         if (def.book[1]) replaceAddress(form, def.fields.find(f => f.k === def.book[1]), a.address);
       }) : null,
-      def.fields.map(f => (f.type === 'grounds' ? groundsField(f, boot) : f.type === 'signer' ? fieldEl(Object.assign({}, f, { type: 'select', options: signerOptions(boot, today) }), '') : fieldEl(f, initial(f)))),
+      def.fields.map(f => (f.type === 'attachments' ? attachmentsField(f, initial(f), opts.items) : f.type === 'department' ? fieldEl(Object.assign({}, f, { type: 'select', options: activeDepartments }), '') : f.type === 'grounds' ? groundsField(f, boot) : f.type === 'signer' ? fieldEl(Object.assign({}, f, { type: 'select', options: signerOptions(boot, today) }), '') : fieldEl(f, initial(f)))),
       def.book && def.book[1] && can('casesEdit') ? h('label', { class: 'check full' }, h('input', { type: 'checkbox', name: '__saveAddr' }), h('span', null, 'Запази в адресатите')) : null),
     h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Отказ'), h('button', { class: 'btn primary', type: 'submit' }, 'Преглед и допълване →')));
   const dlg = h('dialog', { class: 'wide' }, form);
@@ -860,7 +917,8 @@ function docDialog(type, c, boot) {
       if (text) fields.groundText = text;
       if (type === 'dismiss') fields.ground = text;
     }
-    const draft = { type, no: no || '(номер)', date, org, case: c, f: fields };
+    const dep = (boot.departments || []).find(x => x.id === fields.departmentId);
+    const draft = { type, no: no || '(номер)', date, org, case: c, f: Object.assign({}, fields, opts.draft, dep ? { department: dep.name, departmentHead: dep.head, departmentPosition: dep.position } : {}) };
     const original = Docs.editableParagraphs(draft);
     const areas = original.map(t => {
       const ta = h('textarea', { rows: Math.max(2, Math.ceil(t.length / 85)), maxlength: 8000, 'aria-label': 'Абзац' });
@@ -879,7 +937,7 @@ function docDialog(type, c, boot) {
     submitter(step2, async () => {
       const edits = {};
       areas.forEach((ta, i) => { if (ta.value.trim() !== original[i].trim()) edits[i] = ta.value.trim(); });
-      const r = await api('doc.create', { type, regNo: c.regNo, date, no, title: def.title, fields: Object.assign({}, fields, { edits: JSON.stringify(edits), extra: extra.value }) });
+      const r = await api('doc.create', { type, regNo: c ? c.regNo : '', ofId: opts.ofId, date, no, title: def.title, fields: Object.assign({}, fields, { edits: JSON.stringify(edits), extra: extra.value }) });
       await downloadPdf(r.payload);
       dlg.close();
       toast(`Документ № ${r.no} е генериран.`);
@@ -888,7 +946,9 @@ function docDialog(type, c, boot) {
         await api('addressees.save', { type: def.bookType, name: fields[def.book[0]], address: addr, oblast: parseAddress(addr).oblast })
           .then(() => { Store.boot = null; }, e => toast('Документът е издаден, но адресатът не е записан: ' + e.message));
       }
-      viewCase(c.regNo).catch(showError);
+      if (opts.after) opts.after(); else if (c) viewCase(c.regNo).catch(showError);
+      // всеки изходящ документ получава и отделно съпроводително писмо; вътрешните бланки не се изпращат навън
+      if (type !== 'cover' && !type.startsWith('internal') && can('letters')) coverDialog(r.id, opts.after).catch(e => toast(e.message));
     });
     form.hidden = true;
     dlg.append(step2);
@@ -905,8 +965,8 @@ async function viewDocs() {
     h('tbody', null, docs.map(d => {
       const btn = h('button', { class: 'btn sm' }, 'PDF');
       btn.addEventListener('click', () => withBusy(btn, async () => { const r = await api('doc.get', { id: d.id }); await downloadPdf(r.payload); }));
-      return h('tr', null, h('td', { class: 'mono' }, d.no), h('td', { class: 'mono' }, fmt(d.date)), h('td', null, (DEFS[d.type] || {}).title || d.type),
-        h('td', null, d.regNo ? h('a', { href: '#/case/' + encodeURIComponent(d.regNo) }, d.regNo) : '—'), h('td', null, d.author), h('td', { class: 'right' }, btn));
+      return h('tr', null, h('td', { class: 'mono' }, d.no), h('td', { class: 'mono' }, fmt(d.date)), h('td', null, d.type === 'cover' ? d.title : (DEFS[d.type] || {}).title || d.type),
+        h('td', null, d.regNo ? h('a', { href: '#/case/' + encodeURIComponent(d.regNo) }, d.regNo) : '—'), h('td', null, d.author), h('td', { class: 'right' }, h('div', { class: 'actions' }, coverButton(d, () => viewDocs().catch(showError)), btn)));
     })))) : h('p', { class: 'muted' }, 'Още няма генерирани документи.')));
 }
 
@@ -916,17 +976,21 @@ function statTable(title, obj) {
   return h('div', { class: 'card' }, h('h2', null, title), h('br'), h('table', null, h('tbody', null, Object.entries(obj).map(([k, v]) => h('tr', null, h('td', null, k), h('td', { class: 'right mono' }, v))))));
 }
 
+const signModeSelect = () => h('select', { 'aria-label': Docs.signModeField.label }, Docs.signModeField.options.map(([v, l]) => h('option', { value: v }, l)));
+
 async function viewReports() {
   const cur = Number(todayIso().slice(0, 4));
   const sel = h('select', { 'aria-label': 'Година' }, [0, 1, 2, 3, 4, 5].map(i => h('option', { value: cur - i }, `${cur - i} г.`)));
   sel.value = cur - 1;
   const box = h('div', { class: 'stack' });
   const note = h('textarea', { rows: 3, maxlength: 4000 });
+  const signSel = signModeSelect();
   const gen = h('button', { class: 'btn primary' }, 'Генерирай годишния отчет (PDF)');
   gen.addEventListener('click', () => withBusy(gen, async () => {
-    const r = await api('doc.create', { type: 'report', title: `Годишен отчет ${sel.value}`, date: todayIso(), fields: { year: sel.value, note: note.value } });
+    const r = await api('doc.create', { type: 'report', title: `Годишен отчет ${sel.value}`, date: todayIso(), fields: { year: sel.value, note: note.value, signMode: signSel.value } });
     await downloadPdf(r.payload);
     toast(`Отчет № ${r.no} е генериран.`);
+    if (can('letters')) coverDialog(r.id, () => {}).catch(e => toast(e.message));
   }));
   const load = async () => {
     box.replaceChildren(h('p', { class: 'loading' }, 'Зареждане…'));
@@ -936,7 +1000,7 @@ async function viewReports() {
       h('div', { class: 'form-grid' }, statTable('По вид заявител', s.byApplicant), statTable('По начин на подаване', s.byChannel), statTable('По резултат', s.byOutcome), statTable('Откази и причини', s.grounds)));
   };
   sel.addEventListener('change', () => load().catch(showError));
-  setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Годишен отчет по чл. 15, ал. 2'), h('p', { class: 'muted small' }, 'Постъпили заявления, направени откази и причините за тях. Отчетът е част от докладите по чл. 62, ал. 1 от Закона за администрацията.')), h('div', { class: 'actions' }, sel, gen)),
+  setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Годишен отчет по чл. 15, ал. 2'), h('p', { class: 'muted small' }, 'Постъпили заявления, направени откази и причините за тях. Отчетът е част от докладите по чл. 62, ал. 1 от Закона за администрацията.')), h('div', { class: 'actions' }, sel, signSel, gen)),
     h('label', { class: 'field card' }, h('span', null, 'Допълнителна информация за отчета (по желание)'), note), h('br'), box);
   await load();
 }
@@ -947,17 +1011,19 @@ async function viewArt15() {
   items.forEach(i => { map[i.item] = i; });
   const list = art15Items(b.profile.basis);
   const done = list.filter(([n]) => map[String(n)] && map[String(n)].text).length;
+  const signSel = signModeSelect();
   const gen = h('button', { class: 'btn primary' }, 'Генерирай PDF');
   gen.addEventListener('click', () => withBusy(gen, async () => {
-    const r = await api('doc.create', { type: 'art15', title: 'Информация по чл. 15', date: todayIso(), fields: {} });
+    const r = await api('doc.create', { type: 'art15', title: 'Информация по чл. 15', date: todayIso(), fields: { signMode: signSel.value } });
     await downloadPdf(r.payload);
     toast(`Документ № ${r.no} е генериран.`);
+    if (can('letters')) coverDialog(r.id, () => {}).catch(e => toast(e.message));
   }));
   const basisNote = b.profile.basis === 'чл. 3, ал. 1'
     ? 'Списъкът е по чл. 15, ал. 1.'
     : b.profile.basis === 'чл. 3, ал. 2, т. 1' ? 'За лицата по чл. 3, ал. 2, т. 1 важат точките по чл. 15, ал. 3.'
       : 'Чл. 15 не задава изрично това задължение за лицата по чл. 3, ал. 2, т. 2. Показаните точки (по ал. 3) могат да се ползват доброволно.';
-  setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Информация по чл. 15 ЗДОИ'), h('p', { class: 'muted small' }, `Попълнени: ${done} от ${list.length}. ${basisNote} Публикува се на интернет страницата в срок до 3 работни дни от приемането на акта или създаването на информацията (чл. 15а, ал. 4).`)), can('art15') ? gen : null),
+  setView(h('div', { class: 'head' }, h('div', null, h('h1', null, 'Информация по чл. 15 ЗДОИ'), h('p', { class: 'muted small' }, `Попълнени: ${done} от ${list.length}. ${basisNote} Публикува се на интернет страницата в срок до 3 работни дни от приемането на акта или създаването на информацията (чл. 15а, ал. 4).`)), can('art15') ? h('div', { class: 'actions' }, signSel, gen) : null),
     h('div', { class: 'stack' }, list.map(([n, label]) => {
       const cur = map[String(n)] || {};
       const stamp = h('span', { class: 'small muted' }, cur.updated ? `Обновено на ${fmt(cur.updated)}` : 'Не е попълнено');
@@ -1289,6 +1355,7 @@ async function viewOrg() {
     missing.length ? [h('p', { class: 'warnbox' }, 'Има непопълнени данни. Документи не могат да се генерират, докато не са попълнени всички.'), h('br')] : null,
     pending ? [h('p', { class: 'warnbox' }, 'Заявка ' + pending.id + ' чака решение от екипа на ЗДОИ4You.'), h('br')] : null,
     h('div', { class: 'stack' }, form, history, signersCard(b.signers, can('signers'), d => api('signers.save', d), () => { Store.boot = null; viewOrg().catch(showError); }),
+      departmentsCard(b.departments, can('departments'), d => api('departments.save', d), () => { Store.boot = null; viewOrg().catch(showError); }),
       groundsCard(b.grounds, can('grounds'), d => api('grounds.save', d), () => { Store.boot = null; viewOrg().catch(showError); })));
 }
 
@@ -1344,6 +1411,36 @@ function groundsCard(list, canEdit, save, done) {
       h('tbody', null, list.map(g => h('tr', null, h('td', null, g.text), h('td', null, Docs.GROUND_SCOPE_LABELS[g.scope] || g.scope),
         h('td', null, h('span', { class: 'pill ' + (g.active === 'Да' ? 'ok' : 'bad') }, g.active === 'Да' ? 'Активно' : 'Неактивно')),
         h('td', { class: 'right' }, canEdit ? h('button', { class: 'btn sm', type: 'button', onclick: () => edit(g) }, 'Промени') : null)))))) : h('p', { class: 'muted' }, 'Няма добавени основания.'));
+}
+
+/* отдели на организацията: адресати на вътрешните бланки */
+function departmentsCard(list, canEdit, save, done) {
+  const edit = s => {
+    const form = h('form', null, h('h2', null, s ? `Отдел: ${s.name}` : 'Нов отдел'), h('div', { class: 'form-grid' },
+      fieldEl({ k: 'name', label: 'Наименование', req: true, full: true }, s && s.name),
+      fieldEl({ k: 'head', label: 'Ръководител (имена)' }, s && s.head),
+      fieldEl({ k: 'position', label: 'Длъжност на ръководителя' }, s && s.position),
+      fieldEl({ k: 'email', label: 'Имейл', type: 'email' }, s && s.email),
+      s ? fieldEl({ k: 'active', label: 'Активен', type: 'select', options: ['Да', 'Не'], req: true }, s.active) : null),
+    h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Отказ'), h('button', { class: 'btn primary', type: 'submit' }, 'Запази')));
+    const dlg = h('dialog', null, form);
+    dlg.addEventListener('close', () => dlg.remove());
+    submitter(form, async d => {
+      await save(Object.assign(d, { id: s ? s.id : '', active: s ? d.active === 'Да' : true }));
+      dlg.close();
+      toast('Записано.');
+      done();
+    });
+    document.body.append(dlg); dlg.showModal();
+  };
+  return h('div', { class: 'card' },
+    h('div', { class: 'head' }, h('div', null, h('h2', null, 'Отдели'), h('p', { class: 'muted small' }, 'Вътрешните структури на организацията. Избират се във вътрешните бланки по преписките.')),
+      canEdit ? h('button', { class: 'btn sm', type: 'button', onclick: () => edit(null) }, '+ Добави отдел') : null),
+    list.length ? h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null, ['Отдел', 'Ръководител', 'Имейл', 'Състояние', ''].map(t => h('th', null, t)))),
+      h('tbody', null, list.map(s => h('tr', null, h('td', null, s.name), h('td', null, [s.head, s.position].filter(Boolean).join(', ') || '—'), h('td', null, s.email || '—'),
+        h('td', null, h('span', { class: 'pill ' + (s.active === 'Да' ? 'ok' : 'bad') }, s.active === 'Да' ? 'Активен' : 'Неактивен')),
+        h('td', { class: 'right' }, canEdit ? h('button', { class: 'btn sm', type: 'button', onclick: () => edit(s) }, 'Промени') : null)))))) : h('p', { class: 'muted' }, 'Още няма въведени отдели.'));
 }
 
 /* лица, определени да издават решения (чл. 28, ал. 2 ЗДОИ) */
@@ -1565,6 +1662,7 @@ async function viewOpOrg(no) {
       }))));
   setView(h('div', { class: 'head' }, h('div', null, h('p', { class: 'small' }, h('a', { href: '#/op/orgs' }, '← Всички организации')), h('h1', null, r.profile.name), h('p', { class: 'muted small' }, 'Номер на организацията: ', h('b', { class: 'mono' }, no))), h('div', { class: 'actions' }, h('a', { class: 'btn sm', href: '#/op/addressees/' + no }, 'Адресати'), h('span', { class: 'pill ' + (r.status === 'Активна' ? 'ok' : 'bad') }, r.status))),
     h('div', { class: 'stack' }, users, h('details', { class: 'card' }, h('summary', null, 'Входове на потребителите'), h('br'), loginsTable(r.logins)), planForm, signersCard(r.signers, true, d => api('op.signer.save', Object.assign(d, { no })), reload),
+      departmentsCard(r.departments, true, d => api('op.department.save', Object.assign(d, { no })), reload),
       groundsCard(r.grounds, true, d => api('op.ground.save', Object.assign(d, { no })), reload), form));
 }
 

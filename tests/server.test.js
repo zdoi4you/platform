@@ -848,7 +848,7 @@ function staffWith(g, adminToken, no, username, perms) {
 test('rights: defaults by role keep the usual behaviour', () => {
   const { g, a } = setupTwo();
   const me = g.call('org.bootstrap', {}, a.token).me;
-  assert.equal(Object.keys(me.perms).length, 10, 'administrator has all rights');
+  assert.equal(Object.keys(me.perms).length, 11, 'administrator has all rights');
   const s = staffWith(g, a.token, a.no, 'emp1');
   assert.deepEqual(Object.keys(s.me.perms).sort(), ['art15', 'casesAll', 'casesEdit', 'decisions', 'letters', 'reports']);
   assert.equal(g.call('users.list', {}, a.token).users.find(u => u.username === 'emp1').perms.length, 6);
@@ -908,7 +908,7 @@ test('rights: changes apply immediately; users stay administrator-only; the role
   assert.equal(g.call('log.list', {}, s.token).ok, true, 'staff can receive a usually administrator right');
   assert.equal(g.call('users.list', {}, s.token).error, 'role', 'but never user management');
   assert.equal(g.call('users.save', Object.assign({}, base, { role: 'Администратор' }), a.token).ok, true);
-  assert.equal(g.call('users.list', {}, a.token).users.find(u => u.username === 'emp1').perms.length, 10, 'role change resets to defaults');
+  assert.equal(g.call('users.list', {}, a.token).users.find(u => u.username === 'emp1').perms.length, 11, 'role change resets to defaults');
   assert.equal(g.call('op.user.save', { no: a.no, username: 'emp1', name: 'С', position: 'Е', email: 'emp1@example.org', role: 'Служител', perms: ['art15'] }, op).ok, true);
   assert.deepEqual(g.call('op.org.get', { no: a.no }, op).users.find(u => u.username === 'emp1').perms, ['art15'], 'operator can set rights too');
   const raw = JSON.stringify(g.call('users.list', {}, a.token));
@@ -1084,4 +1084,99 @@ test('operator manages addressees of a chosen organization outside cases', () =>
   assert.equal(g.call('op.addressee.delete', { no: a.no, id: own.id }, op).ok, true);
   assert.equal(g.call('op.addressees', { no: a.no }, op).addressees.length, 1);
   assert.ok(g.call('log.list', {}, a.token).log.some(l => l.action === 'Изтрит адресат' && /оператор/.test(l.actor)), 'записано в дневника на организацията');
+});
+
+const dept = (over = {}) => Object.assign({ name: 'Правен отдел', head: 'Анна Иванова', position: 'Началник', email: 'pravo@example.org' }, over);
+
+test('departments: entered by those with the right, separate per organization', () => {
+  const { g, op, a, b } = setupTwo();
+  assert.equal(g.call('departments.save', dept({ name: '' }), a.token).error, 'required');
+  assert.equal(g.call('departments.save', dept({ email: 'лош' }), a.token).error, 'email');
+  const r = g.call('departments.save', dept(), a.token);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(g.call('departments.save', dept({ name: 'правен отдел' }), a.token).error, 'duplicate');
+  assert.equal(g.call('org.bootstrap', {}, a.token).departments[0].name, 'Правен отдел');
+  assert.equal(g.call('org.bootstrap', {}, b.token).departments.length, 0);
+  assert.equal(g.call('departments.save', dept({ id: r.id }), b.token).error, 'notfound');
+  assert.equal(g.call('op.department.save', dept({ no: a.no, name: 'От оператор' }), op).ok, true);
+  assert.equal(g.call('op.org.get', { no: a.no }, op).departments.length, 2);
+  assert.equal(g.call('op.department.save', dept({ no: a.no }), a.token).error, 'role');
+  const staff = staffWith(g, a.token, a.no, 'emp7').token;
+  assert.equal(g.call('departments.save', dept({ name: 'Друг' }), staff).error, 'role', 'служител по подразбиране няма това право');
+  const allowed = staffWith(g, a.token, a.no, 'emp8', ['departments']).token;
+  assert.equal(g.call('departments.save', dept({ name: 'Друг' }), allowed).ok, true);
+});
+
+test('internal forms take the department from the list, not from the browser', () => {
+  const { g, a, b } = setupTwo();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const dep = g.call('departments.save', dept(), a.token).id;
+  const send = (fields, token = a.token, type = 'internalRequest') => g.call('doc.create', { type, regNo: reg, date: '2026-11-04', title: 'Вътрешно искане до отдел', fields }, token);
+  assert.equal(send({ departmentId: 'липсва', what: 'x', by: '2026-11-10' }).error, 'department');
+  assert.equal(send({ departmentId: dep, by: '2026-11-10' }).error, 'required');
+  const other = g.call('departments.save', dept(), b.token).id;
+  assert.equal(send({ departmentId: other, what: 'x', by: '2026-11-10' }).error, 'department', 'отдел на друга организация');
+  const r = send({ departmentId: dep, what: 'Договорите', by: '2026-11-10', department: 'Подправен', departmentHead: 'Подправен' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.no.startsWith('ВТР-'));
+  assert.equal(r.payload.f.department, 'Правен отдел');
+  assert.equal(r.payload.f.departmentHead, 'Анна Иванова');
+  const got = g.call('case.get', { regNo: reg }, a.token);
+  assert.equal(got.case.status, 'Нова', 'статусът не се променя');
+  assert.ok(got.events.some(e => e.text.includes('до Правен отдел') && e.text.includes('2026-11-10')));
+  assert.equal(g.call('departments.save', dept({ id: dep, active: false }), a.token).ok, true);
+  assert.equal(send({ departmentId: dep, what: 'x', by: '2026-11-10' }).error, 'department', 'неактивен отдел');
+  const noLetters = staffWith(g, a.token, a.no, 'emp9', ['casesAll']).token;
+  assert.equal(send({ departmentId: dep, what: 'x', by: '2026-11-10' }, noLetters).error, 'role');
+});
+
+test('forwarding letter requires attachments and does not change the case', () => {
+  const { g, a } = setupTwo();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const base = { body: 'Агенция', bodyAddress: 'ул. Трета 3' };
+  assert.equal(g.call('doc.create', { type: 'forwardBody', regNo: reg, date: '2026-11-04', fields: base }, a.token).error, 'required');
+  const r = g.call('doc.create', { type: 'forwardBody', regNo: reg, date: '2026-11-04', title: 'Препращане', fields: Object.assign({ attachments: 'Заявление' }, base) }, a.token);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const c = g.call('case.get', { regNo: reg }, a.token).case;
+  assert.equal(c.status, 'Нова');
+  assert.equal(c.outcome, '');
+});
+
+test('cover letter: tied to a visible document, takes its data and needs no case of its own', () => {
+  const { g, a, b } = setupTwo();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const src = g.call('doc.create', { type: 'noinfo', regNo: reg, date: '2026-11-04', title: 'Няма информация', fields: {} }, a.token);
+  const cover = (over, token = a.token) => g.call('doc.create', { type: 'cover', ofId: src.id, date: '2026-11-05', fields: Object.assign({ toName: 'Петър Петров', attachments: 'Писмо' }, over) }, token);
+  assert.equal(cover({ toName: '' }).error, 'required');
+  assert.equal(cover({ attachments: '' }).error, 'required');
+  assert.equal(cover({}, b.token).error, 'notfound', 'чужда организация');
+  assert.equal(g.call('doc.create', { type: 'cover', ofId: 'липсва', fields: { toName: 'x', attachments: 'y' } }, a.token).error, 'notfound');
+  const r = cover({ ofNo: 'Подправен', ofTitle: 'Подправен' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.payload.f.ofNo, src.no);
+  assert.equal(r.payload.f.ofTitle, 'Няма информация');
+  assert.equal(r.payload.case.regNo, reg);
+  const list = g.call('case.get', { regNo: reg }, a.token);
+  assert.ok(list.docs.some(d => d.type === 'cover' && d.title === 'Съпроводително писмо към № ' + src.no));
+  assert.equal(list.case.outcome, 'Няма информация (чл. 33)', 'резултатът остава');
+  assert.equal(g.call('doc.create', { type: 'cover', ofId: r.id, fields: { toName: 'x', attachments: 'y' } }, a.token).error, 'value');
+  // към документ без преписка
+  const rep = g.call('doc.create', { type: 'report', title: 'Отчет', date: '2026-11-04', fields: { year: '2026' } }, a.token);
+  const rc = g.call('doc.create', { type: 'cover', ofId: rep.id, date: '2026-11-05', fields: { toName: 'Сметна палата', attachments: 'Отчет' } }, a.token);
+  assert.equal(rc.ok, true, JSON.stringify(rc));
+  assert.equal(rc.payload.case, undefined);
+  assert.equal(g.call('doc.get', { id: rc.id }, a.token).ok, true);
+  const noLetters = staffWith(g, a.token, a.no, 'emp6', ['casesAll', 'reports']).token;
+  assert.equal(g.call('doc.create', { type: 'cover', ofId: rep.id, fields: { toName: 'x', attachments: 'y' } }, noLetters).error, 'role');
+  assert.equal(g.call('doc.get', { id: rc.id }, noLetters).error, 'notfound');
+});
+
+test('signing method is limited to the known values and kept with the document', () => {
+  const { g, a } = setupTwo();
+  const reg = g.call('case.create', caseData(), a.token).regNo;
+  const send = signMode => g.call('doc.create', { type: 'noinfo', regNo: reg, date: '2026-11-04', title: 'x', fields: { signMode } }, a.token);
+  assert.equal(send('друг').error, 'value');
+  assert.equal(send('').ok, true);
+  const r = send('electronic');
+  assert.equal(g.call('doc.get', { id: r.id }, a.token).payload.f.signMode, 'electronic');
 });

@@ -36,6 +36,7 @@
   const ART15_AL3 = [1, 4, 5, 6, 8, 11, 15, 16, 17];
   const art15Items = basis => (basis === 'чл. 3, ал. 1' ? ART15 : ART15.filter(i => ART15_AL3.includes(i[0])));
 
+  const signModeField = { k: 'signMode', label: 'Начин на подписване', type: 'select', options: [['', 'Ръчен подпис'], ['electronic', 'Електронен подпис']], hint: 'При електронен подпис няма линия за ръчно подписване. Файлът се подписва след изтеглянето със средството за електронен подпис на подписващия.' };
   const signerFields = [
     { k: 'signerId', label: 'Издава', type: 'signer', hint: 'Ръководителят или лице, определено по чл. 28, ал. 2. Лицата се добавят в „Организация“.' }
   ];
@@ -106,9 +107,15 @@
       { k: 'days', label: 'Удължаване (дни, до 14)', type: 'number', req: true, min: 1, max: 14, value: '14' },
       { k: 'third', label: 'Трето лице', req: true }
     ] },
-    forward: { group: 'Писма до заявителя', title: 'Препращане на заявлението (чл. 32)', subject: 'препращане на заявление за достъп до обществена информация', effect: 'Преписката се приключва с резултат „Препратено“.', book: ['body', 'bodyAddress'], bookType: 'Орган или друга организация', fields: [
+    forward: { group: 'Писма до заявителя', title: 'Препращане на заявлението (чл. 32)', subject: 'препращане на заявление за достъп до обществена информация', effect: 'Преписката се приключва с резултат „Препратено“. Това е уведомлението до заявителя. До органа се издава отделно „Препращане до друг задължен субект“.', book: ['body', 'bodyAddress'], bookType: 'Орган или друга организация', fields: [
       { k: 'body', label: 'Орган или юридическо лице, към което се препраща', req: true },
       { k: 'bodyAddress', label: 'Адрес на органа', type: 'address', req: true }
+    ] },
+    forwardBody: { group: 'Писма до други задължени субекти', title: 'Препращане до друг задължен субект (чл. 32)', subject: 'препращане на заявление за достъп до обществена информация по компетентност', effect: 'Статусът не се променя. Отбелязва се в историята на преписката.', book: ['body', 'bodyAddress'], bookType: 'Орган или друга организация', fields: [
+      { k: 'body', label: 'Задължен субект, към който се препраща', req: true },
+      { k: 'bodyAddress', label: 'Адрес на задължения субект', type: 'address', req: true },
+      { k: 'notice', label: 'Писмо до заявителя (изх. № и дата, по желание)', hint: 'Ако е празно, в писмото пише, че заявителят се уведомява едновременно с него.' },
+      { k: 'attachments', label: 'Приложения', type: 'attachments', req: true, value: c => `Заявление с рег. № ${c.regNo} от ${fmt(c.regDate)}` }
     ] },
     noinfo: { group: 'Писма до заявителя', title: 'Няма исканата информация (чл. 33)', subject: 'липса на исканата информация', effect: 'Преписката се приключва с резултат „Няма информация“.', fields: [
       { k: 'note', label: 'Допълнително пояснение (по желание)', type: 'textarea' }
@@ -160,6 +167,31 @@
     const extra = DEFS[k].decision ? [] : (k === 'dismiss' ? [letterMotives] : [letterGrounds, letterMotives]);
     DEFS[k].fields = DEFS[k].fields.concat(extra, signerFields);
   });
+  DEFS.cover = { hidden: true, title: 'Съпроводително писмо', book: ['toName', 'toAddress'], bookType: 'Орган или друга организация', effect: 'Отделен PDF към документа, който изпращате.', fields: [
+    { k: 'toName', label: 'До', req: true },
+    { k: 'toAddress', label: 'Адрес или имейл на получателя', type: 'address' },
+    { k: 'note', label: 'Допълнителен текст (по желание)', type: 'textarea', rows: 3 },
+    { k: 'attachments', label: 'Приложения', type: 'attachments', req: true },
+    ...signerFields
+  ] };
+  const departmentField = { k: 'departmentId', label: 'Отдел', type: 'department', req: true, hint: 'Отделите се въвеждат в „Организация“.' };
+  DEFS.internalRequest = { group: 'Вътрешни бланки', title: 'Вътрешно искане до отдел', effect: 'Отделът и срокът се отбелязват в историята на преписката.', fields: [
+    departmentField,
+    { k: 'what', label: 'Каква информация или становище се иска', type: 'textarea', req: true, rows: 5 },
+    { k: 'by', label: 'Срок за отговор', type: 'date', req: true, hint: 'Оставете време преди срока за решение по преписката.' },
+    ...signerFields
+  ] };
+  DEFS.internalReply = { group: 'Вътрешни бланки', title: 'Бланка за отговор от отдел', effect: 'Празна бланка, която отделът попълва и подписва.', fields: [
+    departmentField,
+    { k: 'requestNo', label: 'Към вътрешно искане № (по желание)' }
+  ] };
+  DEFS.internalNote = { group: 'Вътрешни бланки', title: 'Докладна записка', effect: 'Докладна записка до ръководителя по преписката.', fields: [
+    { k: 'fromName', label: 'От (имена)', req: true, value: (c, o, b) => (b && b.me && b.me.name) || '' },
+    { k: 'fromPosition', label: 'Длъжност', value: (c, o, b) => (b && b.me && b.me.position) || '' },
+    { k: 'subjectLine', label: 'Относно', req: true, value: c => `преписка с рег. № ${c.regNo} от ${fmt(c.regDate)}` },
+    { k: 'text', label: 'Текст', type: 'textarea', req: true, rows: 7 }
+  ] };
+  Object.keys(DEFS).forEach(k => { DEFS[k].fields = DEFS[k].fields.concat(signModeField); });
   DEFS.report = { title: 'Годишен отчет по чл. 15, ал. 2 ЗДОИ', fields: [] };
   DEFS.art15 = { title: 'Информация по чл. 15 ЗДОИ', fields: [] };
 
@@ -206,10 +238,20 @@
     ];
   }
 
+  const ELECTRONIC_NOTE = 'Документът се подписва с електронен подпис.';
+  const isElectronic = p => p.f.signMode === 'electronic';
+  /* при електронен подпис няма линия, а само място за видимия подпис */
+  const signLine = p => (isElectronic(p) ? { text: ELECTRONIC_NOTE, fontSize: 9, color: '#44546A', margin: [0, 0, 0, 34] } : { text: '....................................' });
+  const signBlock = (p, name, position) => ({ margin: [0, 26, 0, 0], unbreakable: true, stack: [
+    signLine(p),
+    { text: name || '', bold: true, margin: [0, 2, 0, 0] },
+    { text: position || '' }
+  ] });
+
   function signature(p) {
     const f = p.f, o = p.org;
     return { margin: [0, 26, 0, 0], unbreakable: true, stack: [
-      { text: '....................................' },
+      signLine(p),
       { text: f.signer || o.headName, bold: true, margin: [0, 2, 0, 0] },
       { text: f.signerPosition || o.headPosition },
       ...(f.signerAct ? [{ text: `Лице, определено по чл. 28, ал. 2 ЗДОИ: ${f.signerAct}`, fontSize: 9, color: '#44546A', margin: [0, 2, 0, 0] }] : [])
@@ -230,6 +272,12 @@
   const applicantLine = c => [c.applicantName, c.applicantEik && `ЕИК/БУЛСТАТ: ${c.applicantEik}`, c.applicantSeat && `седалище: ${c.applicantSeat}`, c.applicantAddress && `адрес: ${c.applicantAddress}`, c.applicantEmail && `имейл: ${c.applicantEmail}`].filter(Boolean).join(', ');
   const reqAbout = c => `Заявител: ${applicantLine(c)}. Искана информация: ${c.subject}`;
 
+  /* номерацията идва от списъка, затова евентуални номера в началото на реда се махат */
+  function attachmentsBlock(p) {
+    const list = String(p.f.attachments || '').split(/\n/).map(s => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
+    return list.length ? [{ text: 'Приложения:', bold: true, margin: [0, 16, 0, 4] }, { ol: list }] : [];
+  }
+
   function letter(p, opts) {
     const c = p.case;
     return [
@@ -243,7 +291,8 @@
       ...motives(p),
       ...extraText(p),
       { text: 'С уважение,', margin: [0, 8, 0, 0] },
-      signature(p)
+      signature(p),
+      ...attachmentsBlock(p)
     ];
   }
 
@@ -282,7 +331,68 @@
     return out;
   };
 
+  /* заглавна част на вътрешните бланки */
+  function internalHead(p, title, rows) {
+    return [
+      ...letterhead(p.org),
+      { text: `${title} № ${p.no}`, bold: true, fontSize: 14, alignment: 'center', margin: [0, 6, 0, 2] },
+      { text: `от ${fmt(p.date)}`, alignment: 'center', margin: [0, 0, 0, 12] },
+      ...rows.map(([k, v]) => ({ columns: [{ text: k, bold: true, width: 70 }, { text: v }], margin: [0, 0, 0, 4] })),
+      { text: '', margin: [0, 0, 0, 8] }
+    ];
+  }
+  const caseRef = c => (c ? `преписка с рег. № ${c.regNo} от ${fmt(c.regDate)}` : '');
+  const deptTo = f => [f.departmentPosition || 'Ръководител', f.department].filter(Boolean).join(', ') + (f.departmentHead ? ` (${f.departmentHead})` : '');
+  const ofLabel = f => `документ „${f.ofTitle || ''}“ № ${f.ofNo || ''}${f.ofDate ? ` от ${fmt(f.ofDate)}` : ''}`;
+  const FILL = '......................................................................................................................................';
+
   const BUILD = {
+    forwardBody: p => letter(p, {
+      to: { margin: [0, 0, 0, 12], stack: [{ text: 'ДО', bold: true }, { text: p.f.body, bold: true }, { text: p.f.bodyAddress }] },
+      subject: `${DEFS.forwardBody.subject}, рег. № ${p.case.regNo} от ${fmt(p.case.regDate)}`, salute: 'Уважаеми дами и господа,', body: [
+        `В ${p.org.name} е постъпило ${reqRef(p.case)}. ${reqAbout(p.case)}`,
+        'Не разполагаме с исканата информация, но имаме данни, че тя се намира при Вас. На основание чл. 32, ал. 1 от Закона за достъп до обществена информация (ЗДОИ) Ви препращаме заявлението за разглеждане и произнасяне.',
+        'Срокът по чл. 28, ал. 1 ЗДОИ започва да тече от получаването на препратеното заявление (чл. 32, ал. 2 ЗДОИ).',
+        p.f.notice ? `Заявителят е уведомен за препращането с писмо ${p.f.notice} (чл. 32, ал. 1 ЗДОИ).` : 'Заявителят се уведомява за препращането едновременно с настоящото писмо (чл. 32, ал. 1 ЗДОИ).'
+      ]
+    }),
+    cover: p => letter(p, {
+      to: { margin: [0, 0, 0, 12], stack: [{ text: 'ДО', bold: true }, { text: p.f.toName, bold: true }, { text: p.f.toAddress || '' }] },
+      subject: `изпращане на ${ofLabel(p.f)}${p.case ? `, ${caseRef(p.case)}` : ''}`,
+      salute: p.case && p.f.toName === p.case.applicantName ? salute(p.case) : 'Уважаеми дами и господа,',
+      body: [
+        `Приложено Ви изпращаме ${ofLabel(p.f)}.`,
+        ...(p.f.note ? [p.f.note] : [])
+      ]
+    }),
+    internalRequest: p => [
+      ...internalHead(p, 'ВЪТРЕШНО ИСКАНЕ', [['ДО:', deptTo(p.f)], ['ОТ:', `${p.f.signer || p.org.headName}, ${p.f.signerPosition || p.org.headPosition}`], ['ОТНОСНО:', caseRef(p.case)]]),
+      P(`Постъпило е ${reqRef(p.case)}. Искана информация: ${p.case.subject}`),
+      P(`Моля в срок до ${fmt(p.f.by)} да предоставите: ${p.f.what}`),
+      P('Моля да посочите дали отделът разполага с информацията и къде се намира, дали съдържа класифицирана информация, защитена тайна или лични данни и дали засяга трето лице (чл. 31 ЗДОИ).'),
+      ...extraText(p),
+      signature(p)
+    ],
+    internalReply: p => [
+      ...internalHead(p, 'ОТГОВОР НА ОТДЕЛ', [['ДО:', p.org.unitName], ['ОТ:', deptTo(p.f)], ['ОТНОСНО:', `${caseRef(p.case)}${p.f.requestNo ? `, вътрешно искане № ${p.f.requestNo}` : ''}`]]),
+      P(`Искана информация: ${p.case.subject}`),
+      { text: 'Отделът разполага с исканата информация:   [   ] да     [   ] частично     [   ] не', margin: [0, 6, 0, 10] },
+      { text: 'Местонахождение на информацията, ако не е в отдела:', margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 10] },
+      { text: 'Съдържа защитена информация (класифицирана, тайна, лични данни):   [   ] да     [   ] не', margin: [0, 0, 0, 4] },
+      { text: 'Вид и основание:', margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 10] },
+      { text: 'Засяга трето лице (чл. 31 ЗДОИ):   [   ] да     [   ] не', margin: [0, 0, 0, 4] },
+      { text: 'Кое лице и данни за контакт:', margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 10] },
+      { text: 'Становище и приложения:', margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 4] }, { text: FILL, margin: [0, 0, 0, 10] },
+      ...extraText(p),
+      { text: 'Дата: ............................', margin: [0, 6, 0, 0] },
+      signBlock(p, p.f.departmentHead, p.f.departmentPosition || `Ръководител, ${p.f.department || ''}`)
+    ],
+    internalNote: p => [
+      ...internalHead(p, 'ДОКЛАДНА ЗАПИСКА', [['ДО:', `${p.org.headName}, ${p.org.headPosition}`], ['ОТ:', [p.f.fromName, p.f.fromPosition].filter(Boolean).join(', ')], ['ОТНОСНО:', p.f.subjectLine]]),
+      ...paragraphs(p.f.text).map(t => P(t)),
+      ...extraText(p),
+      signBlock(p, p.f.fromName, p.f.fromPosition)
+    ],
     clarify: p => letter(p, { subject: `${DEFS.clarify.subject} по ${reqRef(p.case)}`, body: [
       `На основание чл. 29, ал. 1 от Закона за достъп до обществена информация (ЗДОИ) Ви уведомяваме, че от заявлението Ви не е ясно точно каква информация се иска или тя е формулирана много общо.`,
       `Моля да уточните следното: ${p.f.what}`,
@@ -367,7 +477,7 @@
         ...extraText(p),
         { margin: [0, 34, 0, 0], columns: [
           { stack: [{ text: 'Заявител:', bold: true }, { text: '\n.............................' }, { text: c.applicantName }] },
-          { stack: [{ text: 'Служител:', bold: true }, { text: '\n.............................' }, { text: p.f.employee || '' }] }
+          { stack: [{ text: 'Служител:', bold: true }, isElectronic(p) ? { text: ELECTRONIC_NOTE, fontSize: 9, color: '#44546A', margin: [0, 4, 0, 8] } : { text: '\n.............................' }, { text: p.f.employee || '' }] }
         ] }
       ];
     },
@@ -412,7 +522,8 @@
             ...(it && it.url ? [{ text: it.url, link: it.url, color: '#0B5FA0', margin: [0, 0, 0, 3] }] : []),
             ...(it && it.updated ? [{ text: `Обновено на ${fmt(it.updated)}`, fontSize: 8.5, color: '#5A6B85' }] : [])
           ];
-        })
+        }),
+        ...(isElectronic(p) ? [signature(p)] : [])
       ];
     }
   };
@@ -459,13 +570,14 @@
     ['art15', 'Информация по чл. 15', 'Промяна и генериране на PDF.'],
     ['signers', 'Управлява упълномощените лица', ''],
     ['grounds', 'Управлява собствените правни основания', ''],
+    ['departments', 'Управлява отделите на организацията', ''],
     ['changes', 'Изпраща заявки за промяна на данните на организацията', ''],
     ['log', 'Вижда дневника', '']
   ];
   const STAFF_PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports', 'art15'];
   const defaultPerms = role => (role === 'Администратор' ? PERMS.map(p => p[0]) : STAFF_PERMS);
 
-  const api = { PERMS, STAFF_PERMS, defaultPerms, orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, GROUNDS, GROUND_SCOPE_LABELS, groundsText, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
+  const api = { signModeField, PERMS, STAFF_PERMS, defaultPerms, orgAddress, DEFS, ART15, ART15_AL3, art15Items, ACCESS_FORMS, REFUSAL, GROUNDS, GROUND_SCOPE_LABELS, groundsText, OBLASTS, courtForOblast, oblastOf, pdfDefinition, editableParagraphs, fileName, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Docs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

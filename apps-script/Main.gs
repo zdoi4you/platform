@@ -29,7 +29,7 @@ const CFG = {
 
 const ROLE_ADMIN = 'Администратор', ROLE_STAFF = 'Служител', ROLE_OP = 'Оператор';
 /* права на потребителите; управлението на потребители е само за роля Администратор и не се отнема */
-const PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports', 'art15', 'signers', 'grounds', 'changes', 'log'];
+const PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports', 'art15', 'signers', 'grounds', 'departments', 'changes', 'log'];
 const STAFF_PERMS = ['casesAll', 'casesEdit', 'letters', 'decisions', 'reports', 'art15'];
 
 /* auth: public | user (всеки потребител на организация) | admin (администратор на организация) | op (оператор) | any */
@@ -50,6 +50,7 @@ function actions_() {
     'org.changes': { auth: 'user', fn: orgChanges_ },
     'signers.save': { auth: 'user', perm: 'signers', write: true, fn: signersSave_ },
     'grounds.save': { auth: 'user', perm: 'grounds', write: true, fn: groundsSave_ },
+    'departments.save': { auth: 'user', perm: 'departments', write: true, fn: departmentsSave_ },
     'addressees.save': { auth: 'user', perm: 'casesEdit', write: true, fn: addresseesSave_ },
     'addressees.delete': { auth: 'user', perm: 'casesEdit', write: true, fn: addresseesDelete_ },
     'users.list': { auth: 'admin', fn: usersList_ },
@@ -94,6 +95,7 @@ function actions_() {
     'op.org.save': { auth: 'op', write: true, fn: opOrgSave_ },
     'op.signer.save': { auth: 'op', write: true, fn: opSignerSave_ },
     'op.ground.save': { auth: 'op', write: true, fn: opGroundSave_ },
+    'op.department.save': { auth: 'op', write: true, fn: opDepartmentSave_ },
     'op.addressees': { auth: 'op', fn: opAddressees_ },
     'op.addressee.save': { auth: 'op', write: true, fn: opAddresseeSave_ },
     'op.addressee.delete': { auth: 'op', write: true, fn: opAddresseeDelete_ },
