@@ -289,12 +289,13 @@ dialog .actions { justify-content: flex-end; margin-top: 16px; }
 }
 .third > .pill { align-self: flex-start; }
 
-/* воден знак върху съдържанието зад входа; не пречи на кликовете */
-.wm { position: fixed; inset: 0; z-index: 15; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 80px 60px; padding: 20px; overflow: hidden; pointer-events: none; user-select: none; color: var(--ink); opacity: .1; font-size: 12px; }
+/* воден знак при опит за снимка; не пречи на кликовете */
+.wm { position: fixed; inset: 0; z-index: 31; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 80px 60px; padding: 20px; overflow: hidden; pointer-events: none; user-select: none; color: var(--ink); opacity: .35; font-size: 12px; }
 .wm span { white-space: nowrap; transform: rotate(-24deg); }
 @media print { .wm { display: none; } }
 
 /* скрито съдържание при опит за снимка и при неактивен прозорец */
-body.noprint.shield > * { opacity: 0 !important; pointer-events: none; }
+body.noprint.shield > *:not(.wm) { opacity: 0 !important; pointer-events: none; }
 body.noprint.shield { background: var(--bg); }
 body.noprint.shield::after { content: "Съдържанието е скрито, докато прозорецът не е активен. Кликнете тук, за да продължите."; position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; color: var(--ink); font-size: 16px; }
+body.noprint.shield.shot::after { content: "Екранните снимки на съдържанието са забранени."; }

@@ -472,7 +472,7 @@ function gate(card, wide, withStatus) {
   window.scrollTo(0, 0);
 }
 
-/* воден знак: снимка на екрана или с телефон остава проследима до потребителя и часа */
+/* воден знак: излиза само при засечен опит за снимка, върху скрития екран */
 function watermark() {
   const me = session.me, now = new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Sofia' }).replace(' ', 'T');
   const text = `${me.name || me.username} · ${me.username} · № ${me.no} · ${fmtTime(now)}`;
@@ -498,8 +498,7 @@ function shell() {
         themePicker(),
         h('button', { class: 'btn sm', onclick: logout }, 'Изход')))),
     h('main', { id: 'view' }, h('p', { class: 'loading' }, 'Зареждане…')),
-    h('footer', { class: 'app-foot small muted' }, statusBar(), h('p', null, MAINTAINER, ' Поддръжка: ', supportLink())),
-    watermark());
+    h('footer', { class: 'app-foot small muted' }, statusBar(), h('p', null, MAINTAINER, ' Поддръжка: ', supportLink())));
   startTimer();
   if (!me.operator) boot().catch(() => {});
 }
@@ -2319,8 +2318,6 @@ async function route() {
   markTab();
   document.getElementById('view').replaceChildren(h('p', { class: 'loading' }, 'Зареждане…'));
   refreshStatusBar();
-  const mark = document.querySelector('#app > .wm');
-  if (mark) mark.replaceWith(watermark());
   try {
     if (page === 'status') return await viewStatus();
     if (session.me.operator) {
@@ -2365,18 +2362,27 @@ async function route() {
 
 /*
  * Защита на съдържанието зад входа. Уеб страница не може да забрани екранна снимка: тя се прави от операционната система.
- * Затова съдържанието се скрива, щом браузърът усети клавиш за снимка или загуби фокуса, а водният знак прави останалите снимки проследими.
+ * Затова съдържанието се скрива, щом браузърът усети клавиш за снимка или загуби фокуса. При клавиш за снимка върху скрития екран излиза и воден знак.
  */
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || '');
 let shieldTimer;
 const shieldOn = () => { clearTimeout(shieldTimer); document.body.classList.add('shield'); };
-const shieldOff = () => { clearTimeout(shieldTimer); document.body.classList.remove('shield'); };
+const shieldOff = () => {
+  clearTimeout(shieldTimer);
+  document.body.classList.remove('shield', 'shot');
+  document.querySelectorAll('body > .wm').forEach(w => w.remove());
+};
 /* скрива за кратко; ако междувременно фокусът е загубен, остава скрито до връщането му */
 function shieldFor(ms) {
   shieldOn();
   shieldTimer = setTimeout(() => { if (document.hasFocus() && !document.hidden) shieldOff(); }, ms);
 }
 const inside = () => document.body.classList.contains('noprint');
+function shotAttempt() {
+  if (session && !document.querySelector('body > .wm')) document.body.append(watermark());
+  document.body.classList.add('shot');
+  shieldFor(3000);
+}
 const SHOT_MSG = 'Екранните снимки на съдържанието са забранени.';
 window.addEventListener('keydown', e => {
   if (!inside()) return;
@@ -2388,13 +2394,13 @@ window.addEventListener('keydown', e => {
     return;
   }
   // снимка от браузъра (Ctrl+Shift+S) и клавиши на системата: Win+Shift+S, Cmd+Shift+3/4/5
-  if (e.ctrlKey && e.shiftKey && (e.code === 'KeyS' || key === 's')) { e.preventDefault(); e.stopImmediatePropagation(); shieldFor(3000); toast(SHOT_MSG); return; }
-  if (e.code === 'PrintScreen' || (IS_MAC ? e.metaKey && e.shiftKey : e.key === 'Meta')) shieldFor(3000);
+  if (e.ctrlKey && e.shiftKey && (e.code === 'KeyS' || key === 's')) { e.preventDefault(); e.stopImmediatePropagation(); shotAttempt(); toast(SHOT_MSG); return; }
+  if (e.code === 'PrintScreen' || (IS_MAC ? e.metaKey && e.shiftKey : e.key === 'Meta')) shotAttempt();
 }, true);
 /* Windows съобщава за Print Screen едва след снимката, затова изображението в клипборда се заменя */
 window.addEventListener('keyup', e => {
   if (e.code !== 'PrintScreen' || !inside()) return;
-  shieldFor(3000);
+  shotAttempt();
   toast(SHOT_MSG);
   if (navigator.clipboard) navigator.clipboard.writeText(SHOT_MSG).catch(() => {});
 }, true);
@@ -2403,10 +2409,5 @@ window.addEventListener('focus', () => shieldFor(300));
 document.addEventListener('visibilitychange', () => { if (document.hidden) shieldOn(); else if (document.hasFocus()) shieldFor(300); });
 /* предпазва от останало скрито съдържание, ако браузърът не съобщи за върнатия фокус */
 window.addEventListener('pointerdown', () => { if (document.hasFocus()) shieldOff(); }, true);
-/* диалозите са над страницата, затова получават собствен воден знак */
-new MutationObserver(list => {
-  if (!session) return;
-  list.forEach(m => m.addedNodes.forEach(n => { if (n.nodeName === 'DIALOG') n.append(watermark()); }));
-}).observe(document.body, { childList: true });
 window.addEventListener('hashchange', route);
 route();
